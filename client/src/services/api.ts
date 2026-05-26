@@ -1,5 +1,15 @@
 const API_BASE = '/api';
 
+function getAuthHeaders(): Record<string, string> {
+  const token = localStorage.getItem('authToken');
+  if (token) {
+    return {
+      'Authorization': `Bearer ${token}`
+    };
+  }
+  return {};
+}
+
 export interface Keyword {
   id: string;
   text: string;
@@ -17,6 +27,13 @@ export interface Hotspot {
   url: string;
   source: string;
   sourceId: string | null;
+  sourceRecordId: string | null;
+  sourceRecord?: {
+    id: string;
+    name: string;
+    type: string;
+    category: string | null;
+  } | null;
   isReal: boolean;
   relevance: number;
   relevanceReason: string | null;
@@ -58,9 +75,11 @@ export interface Stats {
 }
 
 async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+  const authHeaders = getAuthHeaders();
   const response = await fetch(`${API_BASE}${endpoint}`, {
     headers: {
       'Content-Type': 'application/json',
+      ...authHeaders,
       ...options.headers
     },
     ...options
@@ -109,6 +128,7 @@ export const hotspotsApi = {
     page?: number; 
     limit?: number; 
     source?: string; 
+    sourceRecordId?: string;
     importance?: string; 
     keywordId?: string;
     isReal?: string;

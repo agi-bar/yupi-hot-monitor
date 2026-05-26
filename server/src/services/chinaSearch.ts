@@ -31,6 +31,7 @@ class RateLimiter {
 const sogouLimiter = new RateLimiter(3000);
 const bilibiliLimiter = new RateLimiter(2000);
 const weiboLimiter = new RateLimiter(3000);
+const weixinLimiter = new RateLimiter(3000);
 
 function getRandomUserAgent(): string {
   return USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
@@ -448,17 +449,95 @@ export async function detectAndFetchAccount(keyword: string): Promise<{
 }
 
 // ============================================================
+// 微信搜一搜（通过搜狗微信搜索，无需 API Key）
+// ============================================================
+export async function searchWeixin(query: string): Promise<SearchResult[]> {
+  await weixinLimiter.wait();
+
+  try {
+    const response = await axios.get('https://weixin.sogou.com/weixin', {
+      params: {
+        query,
+        type: 2,
+        ie: 'utf-8'
+      },
+      headers: {
+        'User-Agent': getRandomUserAgent(),
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+        'Referer': 'https://weixin.sogou.com/'
+      },
+      timeout: 15000,
+      maxRedirects: 5
+    });
+
+    const $ = cheerio.load(response.data);
+    const results: SearchResult[] = [];
+
+    $('.news-box .news-list li, .txt-box').each((_, element) => {
+      const titleElement = $(element).find('h3 a, .tit a').first();
+      const title = titleElement.text().trim();
+      let url = titleElement.attr('href') || '';
+
+      const snippetElement = $(element).find('.txt-info, .desc, p').first();
+      const snippet = snippetElement.text().trim();
+
+      const accountElement = $(element).find('.account, .s-p a').first();
+      const accountName = accountElement.text().trim();
+
+      const dateElement = $(element).find('.s2, .time').first();
+      const dateStr = dateElement.text().trim();
+
+      if (title && url) {
+        if (!url.startsWith('http')) {
+          url = 'https://weixin.sogou.com' + url;
+        }
+
+        let publishedAt: Date | undefined;
+        if (dateStr) {
+          const now = new Date();
+          if (dateStr.includes('昨天')) {
+            now.setDate(now.getDate() - 1);
+            publishedAt = now;
+          } else if (dateStr.includes('前')) {
+            publishedAt = new Date();
+          }
+        }
+
+        results.push({
+          title,
+          content: snippet || accountName || title,
+          url,
+          source: 'weixin' as const,
+          publishedAt,
+          author: accountName ? {
+            name: accountName
+          } : undefined
+        });
+      }
+    });
+
+    console.log(`Weixin search for "${query}": found ${results.length} results`);
+    return results;
+  } catch (error) {
+    console.error('Weixin search error:', error instanceof Error ? error.message : error);
+    return [];
+  }
+}
+
+// ============================================================
 // 国内聚合搜索
 // ============================================================
 export async function searchAllChina(query: string): Promise<SearchResult[]> {
   const results = await Promise.allSettled([
     searchSogou(query),
     searchBilibili(query),
-    searchWeibo(query)
+    searchWeibo(query),
+    searchWeixin(query)
   ]);
 
   const allResults: SearchResult[] = [];
-  const sourceNames = ['Sogou', 'Bilibili', 'Weibo'];
+  const sourceNames = ['Sogou', 'Bilibili', 'Weibo', 'Weixin'];
   
   results.forEach((result, index) => {
     if (result.status === 'fulfilled') {

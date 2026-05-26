@@ -3,6 +3,16 @@ import { prisma } from '../db.js';
 
 const router = Router();
 
+const ALLOWED_SETTINGS = [
+  'theme',
+  'language',
+  'notifications_enabled',
+  'email_notifications',
+  'hotspot_threshold',
+  'auto_refresh',
+  'refresh_interval'
+];
+
 // 获取所有设置
 router.get('/', async (req, res) => {
   try {
@@ -26,6 +36,19 @@ router.put('/', async (req, res) => {
 
     if (typeof settings !== 'object') {
       return res.status(400).json({ error: 'Invalid settings format' });
+    }
+
+    // 验证只允许已知设置
+    const invalidKeys = Object.keys(settings).filter(
+      k => !ALLOWED_SETTINGS.includes(k)
+    );
+
+    if (invalidKeys.length > 0) {
+      return res.status(400).json({ 
+        error: 'Invalid settings',
+        invalidKeys,
+        allowedKeys: ALLOWED_SETTINGS
+      });
     }
 
     const updates = Object.entries(settings).map(([key, value]) => 
@@ -70,6 +93,15 @@ router.put('/:key', async (req, res) => {
 
     if (value === undefined) {
       return res.status(400).json({ error: 'Value is required' });
+    }
+
+    // 验证 key 是否在白名单中
+    if (!ALLOWED_SETTINGS.includes(req.params.key)) {
+      return res.status(400).json({ 
+        error: 'Invalid setting key',
+        invalidKey: req.params.key,
+        allowedKeys: ALLOWED_SETTINGS
+      });
     }
 
     const setting = await prisma.setting.upsert({

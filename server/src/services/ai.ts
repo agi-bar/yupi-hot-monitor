@@ -1,41 +1,93 @@
-import { OpenRouter } from '@openrouter/sdk';
+import axios from 'axios';
 import type { AIAnalysis } from '../types.js';
 
-const openRouter = new OpenRouter({
-  apiKey: process.env.OPENROUTER_API_KEY ?? ''
-});
+const MINIMAX_API_URL = 'https://api.minimaxi.com/v1/chat/completions';
+const MINIMAX_MODEL = 'MiniMax-M2.7';
 
-// ========== Query Expansion（查询扩展） ==========
+function getMinimaxHeaders() {
+  const apiKey = process.env.MINIMAX_API_KEY || process.env.OPENROUTER_API_KEY;
+  if (!apiKey) {
+    throw new Error('MINIMAX_API_KEY or OPENROUTER_API_KEY is required');
+  }
+  return {
+    'Authorization': `Bearer ${apiKey}`,
+    'Content-Type': 'application/json'
+  };
+}
 
-/**
- * 使用 AI 将关键词扩展为多个变体，用于文本预过滤。
- * 返回扩展后的关键词列表（含原始关键词）。
- * 结果会被缓存，同一关键词不会重复调用 AI。
- */
+function fixJSONQuotes(str: string): string {
+  return str.replace(/'/g, '"');
+}
+
+function parseJSONFlexible(text: string): any {
+  const jsonMatch = text.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) {
+    throw new Error('No JSON found in response');
+  }
+  
+  let jsonStr = jsonMatch[0];
+  
+  try {
+    return JSON.parse(jsonStr);
+  } catch {
+    try {
+      return JSON.parse(fixJSONQuotes(jsonStr));
+    } catch {
+      const objectStart = jsonStr.indexOf('{');
+      const objectEnd = jsonStr.lastIndexOf('}');
+      if (objectStart !== -1 && objectEnd !== -1) {
+        const cleanJson = fixJSONQuotes(jsonStr.substring(objectStart, objectEnd + 1));
+        return JSON.parse(cleanJson);
+      }
+      throw new Error('Failed to parse JSON');
+    }
+  }
+}
+
+async function callMinimax(messages: Array<{role: string; content: string}>, temperature = 0.2, maxTokens = 500): Promise<string> {
+  try {
+    const response = await axios.post(MINIMAX_API_URL, {
+      model: MINIMAX_MODEL,
+      messages,
+      temperature,
+      max_tokens: maxTokens
+    }, {
+      headers: getMinimaxHeaders(),
+      timeout: 60000
+    });
+
+    if (response.data?.choices?.[0]?.message?.content) {
+      return response.data.choices[0].message.content;
+    }
+
+    throw new Error(`Invalid response from MiniMax API: ${JSON.stringify(response.data)}`);
+  } catch (error: any) {
+    console.error('MiniMax API Error:', error.response?.data || error.message);
+    throw error;
+  }
+}
+
 const expansionCache = new Map<string, string[]>();
 
 export async function expandKeyword(keyword: string): Promise<string[]> {
-  // 缓存命中
   if (expansionCache.has(keyword)) {
     return expansionCache.get(keyword)!;
   }
 
-  // 不管 AI 是否可用，先提取基础核心词
   const coreTerms = extractCoreTerms(keyword);
 
-  if (!process.env.OPENROUTER_API_KEY) {
+  const apiKey = process.env.MINIMAX_API_KEY || process.env.OPENROUTER_API_KEY;
+  if (!apiKey) {
     const result = [keyword, ...coreTerms];
     expansionCache.set(keyword, result);
     return result;
   }
 
   try {
-    const result = await openRouter.chat.send({
-      model: 'deepseek/deepseek-v3.2',
-      messages: [
-        {
-          role: 'system',
-          content: `你是一个搜索查询扩展专家。给定一个监控关键词，生成该关键词的变体和相关检索词，用于文本匹配。
+    const content = await callMinimax([
+      {
+        role: 'system',
+        content: `你是一个搜索查询扩展专家。给定一个监控关键词，生成该关键词的变体和相关检索词，用于文本匹配。
 
 规则：
 1. 包含原始关键词的各种写法（大小写、空格、连字符变体）
@@ -47,61 +99,51 @@ export async function expandKeyword(keyword: string): Promise<string[]> {
 输出 JSON 数组，只输出 JSON，不要有其他内容。
 示例输入："Claude Sonnet 4.6"
 示例输出：["Claude Sonnet 4.6", "Claude Sonnet", "Sonnet 4.6", "claude-sonnet-4.6", "Claude 4.6", "Anthropic Sonnet"]`
-        },
-        {
-          role: 'user',
-          content: keyword
-        }
-      ],
-      temperature: 0.2,
-      maxTokens: 300
-    });
+      },
+      {
+        role: 'user',
+        content: keyword
+      }
+    ], 0.2, 300);
 
-    const rawContent = result.choices[0]?.message?.content || '';
-    const responseContent = typeof rawContent === 'string' ? rawContent : JSON.stringify(rawContent);
-    const jsonMatch = responseContent.match(/\[[\s\S]*\]/);
-    if (jsonMatch) {
-      const parsed: string[] = JSON.parse(jsonMatch[0]);
-      // 确保原始关键词和核心词都在列表中
-      const expanded = [...new Set([keyword, ...coreTerms, ...parsed.map(s => s.trim()).filter(Boolean)])];
-      expansionCache.set(keyword, expanded);
-      console.log(`  🔍 Query expansion for "${keyword}": ${expanded.length} variants`);
-      return expanded;
+    const arrayMatch = content.match(/\[[\s\S]*\]/);
+    if (arrayMatch) {
+      try {
+        const parsed: string[] = JSON.parse(arrayMatch[0]);
+        const expanded = [...new Set([keyword, ...coreTerms, ...parsed.map(s => s.trim()).filter(Boolean)])];
+        expansionCache.set(keyword, expanded);
+        console.log(`  🔍 Query expansion for "${keyword}": ${expanded.length} variants`);
+        return expanded;
+      } catch {
+        const cleaned = arrayMatch[0].replace(/'/g, '"');
+        const parsed: string[] = JSON.parse(cleaned);
+        const expanded = [...new Set([keyword, ...coreTerms, ...parsed.map(s => s.trim()).filter(Boolean)])];
+        expansionCache.set(keyword, expanded);
+        console.log(`  🔍 Query expansion for "${keyword}": ${expanded.length} variants`);
+        return expanded;
+      }
     }
   } catch (error) {
     console.error('Query expansion failed:', error);
   }
 
-  // Fallback：使用基础核心词
   const fallback = [keyword, ...coreTerms];
   expansionCache.set(keyword, fallback);
   return fallback;
 }
 
-/**
- * 从关键词中提取核心词（纯文本方式，不依赖 AI）
- */
 function extractCoreTerms(keyword: string): string[] {
   const terms: string[] = [];
-  // 按空格、连字符、下划线分割
   const parts = keyword.split(/[\s\-_\/\\·]+/).filter(p => p.length >= 2);
   if (parts.length > 1) {
     terms.push(...parts);
-    // 两两组合
     for (let i = 0; i < parts.length - 1; i++) {
       terms.push(parts[i] + ' ' + parts[i + 1]);
     }
   }
-  // 去重，排除原始关键词本身
   return [...new Set(terms)].filter(t => t.toLowerCase() !== keyword.toLowerCase());
 }
 
-// ========== 关键词预匹配 ==========
-
-/**
- * 检查文本中是否包含任一扩展关键词（不区分大小写）。
- * 返回是否匹配以及匹配到的词。
- */
 export function preMatchKeyword(text: string, expandedKeywords: string[]): { matched: boolean; matchedTerms: string[] } {
   const lowerText = text.toLowerCase();
   const matchedTerms: string[] = [];
@@ -112,8 +154,6 @@ export function preMatchKeyword(text: string, expandedKeywords: string[]): { mat
   }
   return { matched: matchedTerms.length > 0, matchedTerms };
 }
-
-// ========== AI 内容分析（关键词感知） ==========
 
 function buildAnalysisPrompt(keyword: string, preMatchResult: { matched: boolean; matchedTerms: string[] }): string {
   const matchHint = preMatchResult.matched 
@@ -149,11 +189,11 @@ ${matchHint}
 }
 
 export async function analyzeContent(content: string, keyword: string, preMatchResult?: { matched: boolean; matchedTerms: string[] }): Promise<AIAnalysis> {
-  // 默认预匹配结果
   const matchResult = preMatchResult ?? { matched: false, matchedTerms: [] };
 
-  if (!process.env.OPENROUTER_API_KEY) {
-    console.warn('OpenRouter API key not configured, using fallback analysis');
+  const apiKey = process.env.MINIMAX_API_KEY || process.env.OPENROUTER_API_KEY;
+  if (!apiKey) {
+    console.warn('MiniMax API key not configured, using fallback analysis');
     return {
       isReal: true,
       relevance: matchResult.matched ? 50 : 20,
@@ -166,46 +206,31 @@ export async function analyzeContent(content: string, keyword: string, preMatchR
 
   try {
     const prompt = buildAnalysisPrompt(keyword, matchResult);
+    const response = await callMinimax([
+      {
+        role: 'system',
+        content: prompt
+      },
+      {
+        role: 'user',
+        content: content.slice(0, 2000)
+      }
+    ], 0.2, 500);
 
-    const result = await openRouter.chat.send({
-      model: 'deepseek/deepseek-v3.2',
-      messages: [
-        {
-          role: 'system',
-          content: prompt
-        },
-        {
-          role: 'user',
-          content: content.slice(0, 2000) // 限制内容长度
-        }
-      ],
-      temperature: 0.2, // 降低温度，提高判断一致性
-      maxTokens: 500
-    });
-
-    const rawContent = result.choices[0]?.message?.content || '';
-    const responseContent = typeof rawContent === 'string' ? rawContent : JSON.stringify(rawContent);
+    const parsed = parseJSONFlexible(response);
     
-    // 尝试解析 JSON
-    const jsonMatch = responseContent.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      const parsed = JSON.parse(jsonMatch[0]);
-      return {
-        isReal: Boolean(parsed.isReal),
-        relevance: Math.min(100, Math.max(0, Number(parsed.relevance) || 0)),
-        relevanceReason: String(parsed.relevanceReason || '').slice(0, 200),
-        keywordMentioned: Boolean(parsed.keywordMentioned),
-        importance: ['low', 'medium', 'high', 'urgent'].includes(parsed.importance) 
-          ? parsed.importance 
-          : 'low',
-        summary: String(parsed.summary || '').slice(0, 150)
-      };
-    }
-
-    throw new Error('Failed to parse AI response');
+    return {
+      isReal: Boolean(parsed.isReal),
+      relevance: Math.min(100, Math.max(0, Number(parsed.relevance) || 0)),
+      relevanceReason: String(parsed.relevanceReason || '').slice(0, 200),
+      keywordMentioned: Boolean(parsed.keywordMentioned),
+      importance: ['low', 'medium', 'high', 'urgent'].includes(parsed.importance) 
+        ? parsed.importance 
+        : 'low',
+      summary: String(parsed.summary || '').slice(0, 150)
+    };
   } catch (error) {
     console.error('AI analysis failed:', error);
-    // Fallback
     return {
       isReal: true,
       relevance: matchResult.matched ? 30 : 10,
@@ -218,7 +243,6 @@ export async function analyzeContent(content: string, keyword: string, preMatchR
 }
 
 export async function batchAnalyze(contents: string[], keyword: string, expandedKeywords?: string[]): Promise<AIAnalysis[]> {
-  // 并行分析，但限制并发数
   const batchSize = 3;
   const results: AIAnalysis[] = [];
 

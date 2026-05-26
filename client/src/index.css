@@ -77,3 +77,181 @@ body {
 /* ===== Line Clamp ===== */
 .line-clamp-1 { overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 1; }
 .line-clamp-2 { overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+
+/* ===== Light Mode Theme ===== */
+:root[data-theme="light"] {
+  --bg-base: #f8fafc;
+  --bg-surface: #ffffff;
+  --bg-elevated: #f1f5f9;
+  --bg-hover: #e2e8f0;
+  --border-subtle: rgba(59, 130, 246, 0.1);
+  --border-default: rgba(59, 130, 246, 0.2);
+  --border-active: rgba(59, 130, 246, 0.4);
+  --text-primary: #1e293b;
+  --text-secondary: #64748b;
+  --text-muted: #94a3b8;
+}
+
+:root[data-theme="light"] body {
+  background: var(--bg-base);
+  color: var(--text-primary);
+}
+
+:root[data-theme="light"] ::-webkit-scrollbar-thumb { 
+  background: rgba(59, 130, 246, 0.2); 
+}
+
+:root[data-theme="light"] ::-webkit-scrollbar-thumb:hover { 
+  background: rgba(59, 130, 246, 0.4); 
+}
+
+/* Light mode specific component overrides for better contrast */
+:root[data-theme="light"] {
+  --bg-glass: rgba(255, 255, 255, 0.8);
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+}
+
+/* Ensure sufficient contrast for accessibility in light mode */
+:root[data-theme="light"] a { color: #2563eb; }
+:root[data-theme="light"] a:hover { color: #1d4ed8; }
+
+:root[data-theme="light"] button:focus {
+  outline: 2px solid #3b82f6;
+  outline-offset: 2px;
+}
+
+/* Smooth theme transitions */
+* {
+  transition: background-color 0.3s ease, border-color 0.3s ease, color 0.3s ease;
+}
+
+/* Light mode background overrides */
+:root[data-theme="light"] .bg-gradient-to-br {
+  --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to);
+}
+
+:root[data-theme="light"] .bg-\[\#050510\] {
+  background-color: #f8fafc;
+}
+
+:root[data-theme="light"] .bg-\[\#0a0a1a\] {
+  background-color: #ffffff;
+}
+
+/* Light mode animations adjustments */
+:root[data-theme="light"] .animate-pulse {
+  animation: pulse-soft 3s ease-in-out infinite;
+}
+
+/* Light mode card backgrounds */
+:root[data-theme="light"] .bg-white\/\[0\.02\] {
+  background-color: rgba(255, 255, 255, 0.6);
+}
+
+:root[data-theme="light"] .bg-white\/\[0\.03\] {
+  background-color: rgba(255, 255, 255, 0.7);
+}
+
+:root[data-theme="light"] .bg-white\/\[0\.04\] {
+  background-color: rgba(255, 255, 255, 0.8);
+}
+
+:root[data-theme="light"] .bg-white\/\[0\.05\] {
+  background-color: rgba(255, 255, 255, 0.9);
+}
+
+:root[data-theme="light"] .bg-white\/\[0\.10\] {
+  background-color: rgba(59, 130, 246, 0.1);
+}
+
+/* Light mode text colors */
+:root[data-theme="light"] .text-white {
+  color: #1e293b;
+}
+
+:root[data-theme="light"] .text-slate-400 {
+  color: #64748b;
+}
+
+:root[data-theme="light"] .text-slate-500 {
+  color: #94a3b8;
+}
+
+:root[data-theme="light"] .text-slate-600 {
+  color: #a8b5c4;
+}
+
+/* Light mode border colors */
+:root[data-theme="light"] .border-white\/5 {
+  border-color: rgba(59, 130, 246, 0.1);
+}
+
+:root[data-theme="light"] .border-white\/10 {
+  border-color: rgba(59, 130, 246, 0.15);
+}
+
+:root[data-theme="light"] .border-white\/20 {
+  border-color: rgba(59, 130, 246, 0.25);
+}
+
+/* Light mode backdrop */
+:root[data-theme="light"] .backdrop-blur-2xl {
+  backdrop-filter: blur(40px);
+  background-color: rgba(248, 250, 252, 0.8);
+}
+
+/* Light mode gradients */
+:root[data-theme="light"] .from-blue-500\/10 {
+  --tw-gradient-from: rgba(59, 130, 246, 0.05);
+  --tw-gradient-to: transparent;
+}
+
+:root[data-theme="light"] .from-cyan-500\/10 {
+  --tw-gradient-from: rgba(6, 182, 212, 0.05);
+  --tw-gradient-to: transparent;
+}
+
+:root[data-theme="light"] .from-red-500\/10 {
+  --tw-gradient-from: rgba(239, 68, 68, 0.05);
+  --tw-gradient-to: transparent;
+}
+
+:root[data-theme="light"] .from-emerald-500\/10 {
+  --tw-gradient-from: rgba(16, 185, 129, 0.05);
+  --tw-gradient-to: transparent;
+}
+
+/* Responsive design improvements for light mode */
+:root[data-theme="light"] .group-hover\:bg-white\/5:hover {
+  background-color: rgba(59, 130, 246, 0.05);
+}
+
+:root[data-theme="light"] .hover\:bg-white\/10:hover {
+  background-color: rgba(59, 130, 246, 0.1);
+}
+
+/* Ensure sufficient contrast for text */
+:root[data-theme="light"] .text-xs {
+  color: #64748b;
+}
+
+:root[data-theme="light"] .text-sm {
+  color: #475569;
+}
+
+/* Light mode specific shadows */
+:root[data-theme="light"] .shadow-lg {
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+}
+
+:root[data-theme="light"] .shadow-2xl {
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+}
+
+/* Focus states for accessibility */
+:root[data-theme="light"] :focus-visible {
+  outline: 2px solid #3b82f6;
+  outline-offset: 2px;
+}

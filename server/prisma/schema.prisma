@@ -20,6 +20,38 @@ model Keyword {
   hotspots  Hotspot[]
 }
 
+model Source {
+  id            String    @id @default(uuid())
+  name          String    @unique
+  type          String    // twitter, bing, google, weibo, etc.
+  category      String?   // social, search, news, etc.
+  status        String    @default("active")  // active, paused, error
+  priority      Int       @default(0)
+  description   String?
+  config        String?   // JSON 配置
+  credentials   String?   // 加密的凭证
+  
+  // 统计信息
+  totalRequests Int       @default(0)
+  successCount Int       @default(0)
+  errorCount   Int       @default(0)
+  lastUsedAt   DateTime?
+  
+  // 权限配置
+  isPublic     Boolean   @default(true)
+  allowedRoles String?   // JSON 数组
+  
+  // 关联
+  hotspots     Hotspot[]
+  
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  
+  @@index([type])
+  @@index([category])
+  @@index([status])
+}
+
 model Hotspot {
   id              String    @id @default(uuid())
   title           String
@@ -49,8 +81,17 @@ model Hotspot {
   createdAt       DateTime  @default(now())
   keywordId       String?
   keyword         Keyword?  @relation(fields: [keywordId], references: [id], onDelete: SetNull)
+  sourceRecordId  String?   // 来源管理模块的ID
+  sourceRecord    Source?   @relation(fields: [sourceRecordId], references: [id], onDelete: SetNull)
 
   @@unique([url, source])
+  @@index([source])
+  @@index([importance])
+  @@index([keywordId])
+  @@index([sourceRecordId])
+  @@index([createdAt, source])
+  @@index([createdAt, importance])
+  @@index([createdAt, keywordId])
 }
 
 model Notification {
@@ -61,6 +102,8 @@ model Notification {
   isRead    Boolean  @default(false)
   hotspotId String?
   createdAt DateTime @default(now())
+
+  @@index([isRead, createdAt])
 }
 
 model Setting {

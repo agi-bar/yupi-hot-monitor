@@ -4,9 +4,9 @@ import {
   Flame, Search, Plus, Bell, Trash2, 
   ExternalLink, RefreshCw, X, Check, AlertTriangle,
   Zap, TrendingUp, Twitter, Globe, Eye, Activity, Clock, Target,
-  ChevronLeft, ChevronRight,
   MessageCircle, Repeat2, Quote, User, Shield, ShieldAlert,
-  ChevronDown, ChevronUp, ChevronsUpDown, ThermometerSun, FileText
+  ChevronDown, ChevronUp, ChevronsUpDown, ThermometerSun, FileText,
+  Settings
 } from 'lucide-react';
 import { 
   keywordsApi, hotspotsApi, notificationsApi, triggerHotspotCheck,
@@ -20,6 +20,10 @@ import { Meteors } from './components/ui/meteors';
 import FilterSortBar, { defaultFilterState, type FilterState } from './components/FilterSortBar';
 import { sortHotspots } from './utils/sortHotspots';
 import { relativeTime, formatDateTime } from './utils/relativeTime';
+import Pagination from './components/Pagination';
+import ThemeToggle from './components/ThemeToggle';
+import SourcesManager from './components/SourcesManager';
+import { useTheme } from './contexts/ThemeContext';
 // TextGenerateEffect available for future use
 
 /** 计算热度综合指标（归一化 0-100） */
@@ -46,6 +50,7 @@ function getHeatLevel(score: number): { label: string; color: string } {
 }
 
 function App() {
+  useTheme(); // Initialize theme context
   const [keywords, setKeywords] = useState<Keyword[]>([]);
   const [hotspots, setHotspots] = useState<Hotspot[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
@@ -57,12 +62,14 @@ function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [isChecking, setIsChecking] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'keywords' | 'search'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'keywords' | 'search' | 'sources'>('dashboard');
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [dashboardFilters, setDashboardFilters] = useState<FilterState>({ ...defaultFilterState });
   const [searchFilters, setSearchFilters] = useState<FilterState>({ ...defaultFilterState });
   const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(5);
   const [totalPages, setTotalPages] = useState(1);
+  const [total, setTotal] = useState(0);
   const [searchResults, setSearchResults] = useState<Hotspot[]>([]);
   // 展开/折叠状态
   const [expandedReasons, setExpandedReasons] = useState<Set<string>>(new Set());
@@ -74,11 +81,12 @@ function App() {
     setIsLoading(true);
     try {
       const filterParams: Record<string, string | number> = {
-        limit: 20,
+        limit: pageSize,
         page: currentPage,
       };
       // Apply dashboard filters
       if (dashboardFilters.source) filterParams.source = dashboardFilters.source;
+      if (dashboardFilters.sourceRecordId) filterParams.sourceRecordId = dashboardFilters.sourceRecordId;
       if (dashboardFilters.importance) filterParams.importance = dashboardFilters.importance;
       if (dashboardFilters.keywordId) filterParams.keywordId = dashboardFilters.keywordId;
       if (dashboardFilters.timeRange) filterParams.timeRange = dashboardFilters.timeRange;
@@ -88,13 +96,14 @@ function App() {
 
       const [keywordsData, hotspotsData, statsData, notifData] = await Promise.all([
         keywordsApi.getAll(),
-        hotspotsApi.getAll(filterParams as any),
+        hotspotsApi.getAll(filterParams as Record<string, string | number>),
         hotspotsApi.getStats(),
         notificationsApi.getAll({ limit: 20 })
       ]);
       setKeywords(keywordsData);
       setHotspots(hotspotsData.data);
       setTotalPages(hotspotsData.pagination.totalPages);
+      setTotal(hotspotsData.pagination.total);
       setStats(statsData);
       setNotifications(notifData.data);
       setUnreadCount(notifData.unreadCount);
@@ -109,12 +118,60 @@ function App() {
     } finally {
       setIsLoading(false);
     }
-  }, [dashboardFilters, currentPage]);
+  }, [dashboardFilters, currentPage, pageSize]);
 
   // 当筛选条件变化时重置页码
   useEffect(() => {
     setCurrentPage(1);
+    // 更新 URL 参数
+    const url = new URL(window.location.href);
+    url.searchParams.set('page', '1');
+    window.history.replaceState({}, '', url.toString());
   }, [dashboardFilters]);
+
+  // 页面大小变化时重置页码
+  useEffect(() => {
+    setCurrentPage(1);
+    // 更新 URL 参数
+    const url = new URL(window.location.href);
+    url.searchParams.set('page', '1');
+    window.history.replaceState({}, '', url.toString());
+  }, [pageSize]);
+
+  // 从 URL 初始化分页参数
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const page = params.get('page');
+    const size = params.get('pageSize');
+    
+    if (page) {
+      const pageNum = parseInt(page);
+      if (!isNaN(pageNum) && pageNum > 0) {
+        setCurrentPage(pageNum);
+      }
+    }
+    
+    if (size) {
+      const sizeNum = parseInt(size);
+      if (!isNaN(sizeNum) && [5, 10, 20, 50, 100].includes(sizeNum)) {
+        setPageSize(sizeNum);
+      }
+    }
+  }, []);
+
+  // 页码变化时更新 URL
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    url.searchParams.set('page', currentPage.toString());
+    window.history.replaceState({}, '', url.toString());
+  }, [currentPage]);
+
+  // 页面大小变化时更新 URL
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    url.searchParams.set('pageSize', pageSize.toString());
+    window.history.replaceState({}, '', url.toString());
+  }, [pageSize]);
 
   useEffect(() => {
     loadData();
@@ -154,8 +211,9 @@ function App() {
       setNewKeyword('');
       showToast('关键词添加成功', 'success');
       subscribeToKeywords([keyword.text]);
-    } catch (error: any) {
-      showToast(error.message || '添加失败', 'error');
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : '添加失败';
+      showToast(message, 'error');
     }
   };
 
@@ -165,7 +223,7 @@ function App() {
       await keywordsApi.delete(id);
       setKeywords(prev => prev.filter(k => k.id !== id));
       showToast('关键词已删除', 'success');
-    } catch (error) {
+    } catch {
       showToast('删除失败', 'error');
     }
   };
@@ -175,7 +233,7 @@ function App() {
     try {
       const updated = await keywordsApi.toggle(id);
       setKeywords(prev => prev.map(k => k.id === id ? updated : k));
-    } catch (error) {
+    } catch {
       showToast('操作失败', 'error');
     }
   };
@@ -190,7 +248,7 @@ function App() {
       const result = await hotspotsApi.search(searchQuery);
       setSearchResults(result.results);
       showToast(`找到 ${result.results.length} 条结果`, 'success');
-    } catch (error) {
+    } catch {
       showToast('搜索失败', 'error');
     } finally {
       setIsLoading(false);
@@ -204,7 +262,7 @@ function App() {
       await triggerHotspotCheck();
       showToast('热点检查已触发', 'success');
       setTimeout(loadData, 5000);
-    } catch (error) {
+    } catch {
       showToast('触发失败', 'error');
     } finally {
       setIsChecking(false);
@@ -220,6 +278,17 @@ function App() {
     } catch (error) {
       console.error('Failed to mark as read:', error);
     }
+  };
+
+  // 处理页码变化
+  const handlePageChange = (page: number) => {
+    setCurrentPage(page);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  // 处理页面大小变化
+  const handlePageSizeChange = (size: number) => {
+    setPageSize(size);
   };
 
   // 展开/折叠相关性理由
@@ -303,6 +372,7 @@ function App() {
       case 'twitter': return <Twitter className="w-4 h-4" />;
       case 'bilibili': return <Eye className="w-4 h-4" />;
       case 'weibo': return <Activity className="w-4 h-4" />;
+      case 'weixin': return <MessageCircle className="w-4 h-4" />;
       case 'sogou': return <Search className="w-4 h-4" />;
       case 'hackernews': return <Zap className="w-4 h-4" />;
       default: return <Globe className="w-4 h-4" />;
@@ -317,6 +387,7 @@ function App() {
       sogou: '搜狗',
       bilibili: 'Bilibili',
       weibo: '微博热搜',
+      weixin: '微信搜一搜',
       hackernews: 'HackerNews',
       duckduckgo: 'DuckDuckGo'
     };
@@ -366,8 +437,8 @@ function App() {
                 <div className="absolute -bottom-1 -right-1 w-3 h-3 bg-emerald-400 rounded-full border-2 border-[#050510] animate-pulse" />
               </div>
               <div>
-                <h1 className="text-lg font-semibold text-white tracking-tight">HotPulse</h1>
-                <p className="text-xs text-slate-500">AI 热点雷达</p>
+                <h1 className="text-lg font-semibold text-white tracking-tight">越疆情报</h1>
+                <p className="text-xs text-slate-500">AI 越疆情报</p>
               </div>
             </div>
 
@@ -389,13 +460,16 @@ function App() {
                 {isChecking ? '扫描中' : '立即扫描'}
               </motion.button>
 
+              {/* Theme Toggle */}
+              <ThemeToggle />
+
               {/* Notifications */}
               <div className="relative">
                 <button
                   onClick={() => setShowNotifications(!showNotifications)}
-                  className="relative p-2.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/5 transition-all"
+                  className="relative p-2.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/5 hover:border-white/10 transition-all active:scale-95 cursor-pointer"
                 >
-                  <Bell className="w-5 h-5 text-slate-400" />
+                  <Bell className="w-5 h-5 text-slate-400 hover:text-slate-300 transition-colors" />
                   {unreadCount > 0 && (
                     <span className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 rounded-full text-[10px] font-bold flex items-center justify-center text-white">
                       {unreadCount > 9 ? '9+' : unreadCount}
@@ -450,6 +524,7 @@ function App() {
             { key: 'dashboard', label: '热点雷达', icon: Activity },
             { key: 'keywords', label: '监控词', icon: Target },
             { key: 'search', label: '搜索', icon: Search },
+            { key: 'sources', label: '来源管理', icon: Settings },
           ] as const).map(({ key, label, icon: Icon }) => (
             <button
               key={key}
@@ -821,54 +896,15 @@ function App() {
               )}
 
               {/* Pagination */}
-              {totalPages > 1 && !isLoading && (
-                <div className="flex items-center justify-center gap-3 mt-6">
-                  <button
-                    onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                    disabled={currentPage <= 1}
-                    className="p-2 rounded-xl bg-white/5 border border-white/10 text-slate-400 hover:text-white hover:border-white/20 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
-                  >
-                    <ChevronLeft className="w-4 h-4" />
-                  </button>
-                  <div className="flex items-center gap-1.5">
-                    {Array.from({ length: Math.min(totalPages, 7) }, (_, i) => {
-                      let page: number;
-                      if (totalPages <= 7) {
-                        page = i + 1;
-                      } else if (currentPage <= 4) {
-                        page = i + 1;
-                      } else if (currentPage >= totalPages - 3) {
-                        page = totalPages - 6 + i;
-                      } else {
-                        page = currentPage - 3 + i;
-                      }
-                      return (
-                        <button
-                          key={page}
-                          onClick={() => setCurrentPage(page)}
-                          className={cn(
-                            "w-8 h-8 rounded-lg text-xs font-medium transition-all",
-                            currentPage === page
-                              ? "bg-blue-500/20 text-blue-400 border border-blue-500/30"
-                              : "text-slate-500 hover:text-white hover:bg-white/5"
-                          )}
-                        >
-                          {page}
-                        </button>
-                      );
-                    })}
-                  </div>
-                  <button
-                    onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-                    disabled={currentPage >= totalPages}
-                    className="p-2 rounded-xl bg-white/5 border border-white/10 text-slate-400 hover:text-white hover:border-white/20 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
-                  >
-                    <ChevronRight className="w-4 h-4" />
-                  </button>
-                  <span className="text-xs text-slate-600 ml-2">
-                    共 {stats?.total || 0} 条
-                  </span>
-                </div>
+              {!isLoading && (
+                <Pagination
+                  currentPage={currentPage}
+                  totalPages={totalPages}
+                  pageSize={pageSize}
+                  total={total}
+                  onPageChange={handlePageChange}
+                  onPageSizeChange={handlePageSizeChange}
+                />
               )}
             </div>
           </div>
@@ -978,13 +1014,13 @@ function App() {
             <form onSubmit={handleSearch} className="p-5 rounded-2xl bg-white/[0.02] border border-white/5">
               <div className="flex gap-3">
                 <div className="flex-1 relative">
-                  <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-600" />
+                  <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-600 transition-colors" />
                   <input
                     type="text"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     placeholder="搜索热点内容..."
-                    className="w-full pl-12 pr-4 py-3 rounded-xl bg-white/5 border border-white/10 text-white placeholder-slate-600 focus:outline-none focus:border-blue-500/50 focus:ring-2 focus:ring-blue-500/20 transition-all"
+                    className="w-full pl-12 pr-4 py-3 rounded-xl bg-white/5 border border-white/10 text-white placeholder-slate-600 focus:outline-none focus:border-blue-500/50 focus:ring-2 focus:ring-blue-500/20 transition-all hover:border-white/20"
                   />
                 </div>
                 <motion.button 
@@ -992,7 +1028,7 @@ function App() {
                   disabled={isLoading}
                   whileHover={{ scale: 1.02 }}
                   whileTap={{ scale: 0.98 }}
-                  className="px-6 py-3 rounded-xl bg-gradient-to-r from-blue-600 to-cyan-500 text-white font-medium flex items-center gap-2 shadow-lg shadow-blue-500/25 disabled:opacity-50"
+                  className="px-6 py-3 rounded-xl bg-gradient-to-r from-blue-600 to-cyan-500 text-white font-medium flex items-center gap-2 shadow-lg shadow-blue-500/25 disabled:opacity-50 hover:shadow-blue-500/40 transition-shadow cursor-pointer"
                 >
                   {isLoading ? (
                     <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
@@ -1113,6 +1149,11 @@ function App() {
               })}
             </div>
           </div>
+        )}
+
+        {/* Sources Tab */}
+        {activeTab === 'sources' && (
+          <SourcesManager />
         )}
       </main>
     </div>

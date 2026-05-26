@@ -2,7 +2,7 @@ import { Server } from 'socket.io';
 import { prisma } from '../db.js';
 import { searchTwitter } from '../services/twitter.js';
 import { searchBing, searchHackerNews, deduplicateResults } from '../services/search.js';
-import { searchSogou, searchBilibili, searchWeibo, detectAndFetchAccount } from '../services/chinaSearch.js';
+import { searchSogou, searchBilibili, searchWeibo, searchWeixin, detectAndFetchAccount } from '../services/chinaSearch.js';
 import { analyzeContent, expandKeyword, preMatchKeyword } from '../services/ai.js';
 import { sendHotspotEmail } from '../services/email.js';
 import type { SearchResult } from '../types.js';
@@ -20,17 +20,18 @@ function filterByFreshness(results: SearchResult[]): SearchResult[] {
   });
 }
 
-// 按来源优先级排序：Twitter > 微博 > B站/账号内容 > 搜索引擎
+// 按来源优先级排序：Twitter > 微博 > B站/账号内容 > 微信 > 搜索引擎
 function prioritizeResults(results: SearchResult[]): SearchResult[] {
   const priorityMap: Record<string, number> = {
     twitter: 1,
     weibo: 2,
     bilibili: 3,
-    hackernews: 4,
-    sogou: 5,
-    bing: 6,
-    google: 7,
-    duckduckgo: 8
+    weixin: 4,
+    hackernews: 5,
+    sogou: 6,
+    bing: 7,
+    google: 8,
+    duckduckgo: 9
   };
   return [...results].sort((a, b) => {
     return (priorityMap[a.source] || 99) - (priorityMap[b.source] || 99);
@@ -80,14 +81,16 @@ export async function runHotspotCheck(io: Server): Promise<void> {
         hackernewsResults,
         sogouResults,
         bilibiliResults,
-        weiboResults
+        weiboResults,
+        weixinResults
       ] = await Promise.allSettled([
         searchTwitter(keyword.text),
         searchBing(keyword.text),
         searchHackerNews(keyword.text),
         searchSogou(keyword.text),
         searchBilibili(keyword.text),
-        searchWeibo(keyword.text)
+        searchWeibo(keyword.text),
+        searchWeixin(keyword.text)
       ]);
 
       const allResults: SearchResult[] = [];
@@ -104,7 +107,8 @@ export async function runHotspotCheck(io: Server): Promise<void> {
         { name: 'HackerNews', result: hackernewsResults },
         { name: 'Sogou', result: sogouResults },
         { name: 'Bilibili', result: bilibiliResults },
-        { name: 'Weibo', result: weiboResults }
+        { name: 'Weibo', result: weiboResults },
+        { name: 'Weixin', result: weixinResults }
       ];
 
       for (const source of sources) {
@@ -123,16 +127,23 @@ export async function runHotspotCheck(io: Server): Promise<void> {
       console.log(`  Total: ${allResults.length} raw → ${uniqueResults.length} unique → ${freshResults.length} fresh (within ${MAX_AGE_HOURS}h)`);
 
       // 处理结果：Twitter 优先多给配额
-      // Twitter 最多处理 15 条，其他来源共享 10 条配额
+      // Twitter 最多处理 20 条，其他来源共享 15 条配额
       let twitterProcessed = 0;
       let otherProcessed = 0;
-      const TWITTER_QUOTA = 15;
-      const OTHER_QUOTA = 10;
+      let skippedByQuota = 0;
+      const TWITTER_QUOTA = 20;
+      const OTHER_QUOTA = 15;
 
       for (const item of sortedResults) {
         // 检查配额
-        if (item.source === 'twitter' && twitterProcessed >= TWITTER_QUOTA) continue;
-        if (item.source !== 'twitter' && otherProcessed >= OTHER_QUOTA) continue;
+        if (item.source === 'twitter' && twitterProcessed >= TWITTER_QUOTA) {
+          skippedByQuota++;
+          continue;
+        }
+        if (item.source !== 'twitter' && otherProcessed >= OTHER_QUOTA) {
+          skippedByQuota++;
+          continue;
+        }
         if (twitterProcessed + otherProcessed >= TWITTER_QUOTA + OTHER_QUOTA) break;
         try {
           // 检查是否已存在
@@ -237,6 +248,13 @@ export async function runHotspotCheck(io: Server): Promise<void> {
         } catch (error) {
           console.error(`  Error processing result:`, error);
         }
+      }
+
+      // 输出配额统计
+      if (skippedByQuota > 0) {
+        console.log(`  ⏭ Total skipped by quota: ${skippedByQuota} (Twitter: ${twitterProcessed}/${TWITTER_QUOTA}, Other: ${otherProcessed}/${OTHER_QUOTA})`);
+      } else if (twitterProcessed > 0 || otherProcessed > 0) {
+        console.log(`  📊 Quota used: Twitter ${twitterProcessed}/${TWITTER_QUOTA}, Other ${otherProcessed}/${OTHER_QUOTA}`);
       }
 
       // 避免过快请求

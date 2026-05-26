@@ -11,6 +11,7 @@ router.get('/', async (req, res) => {
       page = '1', 
       limit = '20', 
       source, 
+      sourceRecordId,
       importance,
       keywordId,
       isReal,
@@ -21,12 +22,23 @@ router.get('/', async (req, res) => {
       sortOrder = 'desc'
     } = req.query;
 
-    const pageNum = parseInt(page as string);
-    const limitNum = parseInt(limit as string);
-    const skip = (pageNum - 1) * limitNum;
+    // 分页参数验证与边界处理
+    let pageNum = parseInt(page as string);
+    let limitNum = parseInt(limit as string);
+    
+    // 非法数字或负数处理
+    if (isNaN(pageNum) || pageNum < 1) pageNum = 1;
+    if (isNaN(limitNum) || limitNum < 1) limitNum = 20;
+    
+    // 限制每页条数的合理范围
+    const MIN_PAGE_SIZE = 1;
+    const MAX_PAGE_SIZE = 100;
+    if (limitNum < MIN_PAGE_SIZE) limitNum = MIN_PAGE_SIZE;
+    if (limitNum > MAX_PAGE_SIZE) limitNum = MAX_PAGE_SIZE;
 
     const where: any = {};
     if (source) where.source = source;
+    if (sourceRecordId) where.sourceRecordId = sourceRecordId;
     if (importance) where.importance = importance;
     if (keywordId) where.keywordId = keywordId;
     if (isReal !== undefined && isReal !== '') {
@@ -85,26 +97,58 @@ router.get('/', async (req, res) => {
         break;
     }
 
-    const [rawHotspots, total] = await Promise.all([
-      prisma.hotspot.findMany({
+    // 先查询总数，用于处理页码越界
+    const total = await prisma.hotspot.count({ where });
+    
+    // 计算总页数并处理页码越界
+    const totalPages = Math.ceil(total / limitNum);
+    if (pageNum > totalPages && totalPages > 0) {
+      pageNum = totalPages;
+    }
+    
+    const skip = (pageNum - 1) * limitNum;
+    
+    let hotspots;
+    let warning = null;
+    
+    if (needsMemorySort) {
+      const MAX_IN_MEMORY_SORT = 10000;
+      const allHotspots = await prisma.hotspot.findMany({
         where,
         orderBy,
-        ...(needsMemorySort ? {} : { skip, take: limitNum }),
+        take: MAX_IN_MEMORY_SORT,
         include: {
           keyword: {
             select: { id: true, text: true, category: true }
+          },
+          sourceRecord: {
+            select: { id: true, name: true, type: true, category: true }
           }
         }
-      }),
-      prisma.hotspot.count({ where })
-    ]);
-
-    let hotspots;
-    if (needsMemorySort) {
-      const sorted = sortHotspots(rawHotspots, sort, order as 'asc' | 'desc');
+      });
+      
+      if (total > MAX_IN_MEMORY_SORT) {
+        warning = `Memory sort limit reached. Showing top ${MAX_IN_MEMORY_SORT} of ${total} records. For complete results, use 'createdAt' sort.`;
+        console.warn(`[Hotspots API] ⚠️ ${warning}`);
+      }
+      
+      const sorted = sortHotspots(allHotspots, sort, order as 'asc' | 'desc');
       hotspots = sorted.slice(skip, skip + limitNum);
     } else {
-      hotspots = rawHotspots;
+      hotspots = await prisma.hotspot.findMany({
+        where,
+        orderBy,
+        skip,
+        take: limitNum,
+        include: {
+          keyword: {
+            select: { id: true, text: true, category: true }
+          },
+          sourceRecord: {
+            select: { id: true, name: true, type: true, category: true }
+          }
+        }
+      });
     }
 
     res.json({
@@ -114,7 +158,8 @@ router.get('/', async (req, res) => {
         limit: limitNum,
         total,
         totalPages: Math.ceil(total / limitNum)
-      }
+      },
+      ...(warning && { warning })
     });
   } catch (error) {
     console.error('Error fetching hotspots:', error);

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   ArrowUpDown, Filter, X, Clock, Flame, TrendingUp, Target,
@@ -6,9 +6,11 @@ import {
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import type { Keyword } from '../services/api';
+import { sourcesApi, type Source } from '../services/sources';
 
 export interface FilterState {
   source: string;
+  sourceRecordId: string;
   importance: string;
   keywordId: string;
   timeRange: string;
@@ -19,6 +21,7 @@ export interface FilterState {
 
 export const defaultFilterState: FilterState = {
   source: '',
+  sourceRecordId: '',
   importance: '',
   keywordId: '',
   timeRange: '',
@@ -142,9 +145,23 @@ function Dropdown({
 
 export default function FilterSortBar({ filters, onChange, keywords }: FilterSortBarProps) {
   const [showFilters, setShowFilters] = useState(false);
+  const [sources, setSources] = useState<Source[]>([]);
+
+  useEffect(() => {
+    const fetchSources = async () => {
+      try {
+        const data = await sourcesApi.getAll({ limit: 100 });
+        setSources(data.data);
+      } catch (error) {
+        console.error('Failed to fetch sources:', error);
+      }
+    };
+    fetchSources();
+  }, []);
 
   const activeFilterCount = [
     filters.source,
+    filters.sourceRecordId,
     filters.importance,
     filters.keywordId,
     filters.timeRange,
@@ -164,6 +181,11 @@ export default function FilterSortBar({ filters, onChange, keywords }: FilterSor
   const keywordOptions = [
     { value: '', label: '全部关键词' },
     ...keywords.filter(k => k.isActive).map(k => ({ value: k.id, label: k.text })),
+  ];
+
+  const sourceRecordOptions = [
+    { value: '', label: '全部来源' },
+    ...sources.map(s => ({ value: s.id, label: s.name })),
   ];
 
   return (
@@ -232,6 +254,12 @@ export default function FilterSortBar({ filters, onChange, keywords }: FilterSor
                 onRemove={() => update('source', '')}
               />
             )}
+            {filters.sourceRecordId && (
+              <FilterTag
+                label={sources.find(s => s.id === filters.sourceRecordId)?.name || '来源'}
+                onRemove={() => update('sourceRecordId', '')}
+              />
+            )}
             {filters.importance && (
               <FilterTag
                 label={IMPORTANCE_OPTIONS.find(o => o.value === filters.importance)?.label || filters.importance}
@@ -270,7 +298,8 @@ export default function FilterSortBar({ filters, onChange, keywords }: FilterSor
             transition={{ duration: 0.2 }}
           >
             <div className="flex items-center gap-2 flex-wrap p-3 rounded-xl bg-white/[0.02] border border-white/5">
-              <Dropdown label="来源" value={filters.source} options={SOURCE_OPTIONS} onChange={(v) => update('source', v)} />
+              <Dropdown label="来源类型" value={filters.source} options={SOURCE_OPTIONS} onChange={(v) => update('source', v)} />
+              <Dropdown label="来源实例" value={filters.sourceRecordId} options={sourceRecordOptions} onChange={(v) => update('sourceRecordId', v)} />
               <Dropdown label="重要程度" value={filters.importance} options={IMPORTANCE_OPTIONS} onChange={(v) => update('importance', v)} />
               <Dropdown label="关键词" value={filters.keywordId} options={keywordOptions} onChange={(v) => update('keywordId', v)} />
               <Dropdown label="时间" value={filters.timeRange} options={TIME_RANGE_OPTIONS} onChange={(v) => update('timeRange', v)} />

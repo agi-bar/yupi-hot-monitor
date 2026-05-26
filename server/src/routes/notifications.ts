@@ -8,9 +8,9 @@ router.get('/', async (req, res) => {
   try {
     const { page = '1', limit = '50', unreadOnly } = req.query;
 
-    const pageNum = parseInt(page as string);
-    const limitNum = parseInt(limit as string);
-    const skip = (pageNum - 1) * limitNum;
+    const pageNum = Math.max(parseInt(page as string) || 1, 1);
+    const limitNum = Math.min(Math.max(parseInt(limit as string) || 50, 1), 100);
+    const skip = Math.max((pageNum - 1) * limitNum, 0);
 
     const where: any = {};
     if (unreadOnly === 'true') {
@@ -97,6 +97,16 @@ router.delete('/:id', async (req, res) => {
 // 清空所有通知
 router.delete('/', async (req, res) => {
   try {
+    const { confirm } = req.body;
+
+    // 添加二次确认验证
+    if (confirm !== true) {
+      return res.status(400).json({ 
+        error: 'Confirmation required',
+        message: 'Please provide confirm: true to proceed with deletion'
+      });
+    }
+
     await prisma.notification.deleteMany({});
     res.json({ message: 'All notifications deleted' });
   } catch (error) {
