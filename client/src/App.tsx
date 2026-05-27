@@ -810,16 +810,17 @@ function App() {
 
                           {/* 时间信息 */}
                           <div className="flex flex-wrap items-center gap-3 text-[11px] text-slate-600">
-                            {hotspot.publishedAt && (
+                            {hotspot.publishedAt ? (
                               <span className="flex items-center gap-1" title={`发布于 ${formatDateTime(hotspot.publishedAt)}`}>
                                 <Clock className="w-3 h-3" />
                                 发布 {relativeTime(hotspot.publishedAt)}
                               </span>
+                            ) : (
+                              <span className="flex items-center gap-1" title={`抓取于 ${formatDateTime(hotspot.createdAt)}`}>
+                                <Activity className="w-3 h-3" />
+                                抓取 {relativeTime(hotspot.createdAt)}
+                              </span>
                             )}
-                            <span className="flex items-center gap-1" title={`抓取于 ${formatDateTime(hotspot.createdAt)}`}>
-                              <Activity className="w-3 h-3" />
-                              抓取 {relativeTime(hotspot.createdAt)}
-                            </span>
                           </div>
 
                           {/* AI 相关性理由 - 可折叠 */}
@@ -1128,12 +1129,19 @@ function App() {
                           </span>
                         )}
                       </div>
-                      {hotspot.publishedAt && (
-                        <div className="flex items-center gap-1 text-[11px] text-slate-600 mt-1" title={formatDateTime(hotspot.publishedAt)}>
-                          <Clock className="w-3 h-3" />
-                          发布 {relativeTime(hotspot.publishedAt)}
-                        </div>
-                      )}
+                      <div className="flex items-center gap-1 text-[11px] text-slate-600 mt-1">
+                        {hotspot.publishedAt ? (
+                          <span title={formatDateTime(hotspot.publishedAt)}>
+                            <Clock className="w-3 h-3 inline" />
+                            发布 {relativeTime(hotspot.publishedAt)}
+                          </span>
+                        ) : (
+                          <span title={formatDateTime(hotspot.createdAt)}>
+                            <Activity className="w-3 h-3 inline" />
+                            抓取 {relativeTime(hotspot.createdAt)}
+                          </span>
+                        )}
+                      </div>
                     </div>
                     <a
                       href={hotspot.url}

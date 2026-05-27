@@ -13,27 +13,35 @@ import notificationsRouter from './routes/notifications.js';
 import sourcesRouter from './routes/sources.js';
 import datasourcesRouter from './routes/datasources.js';
 import { runHotspotCheck } from './jobs/hotspotChecker.js';
+import { duplicateCleanupJob } from './jobs/duplicateCleanup.js';
 import { dataSourceManager } from './datasources/DataSourceManager.js';
 import { rateLimit } from './middleware/rateLimit.js';
 import { initializeRedis, closeRedis } from './utils/redis.js';
+import { initializeSourceEventSubscriber } from './events/sourceEventSubscriber.js';
 
 dotenv.config();
 
 const app = express();
 const httpServer = createServer(app);
+
+const corsOptions = {
+  origin: process.env.CLIENT_URL || 'http://localhost:5173',
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
+  credentials: true
+};
+
 const io = new Server(httpServer, {
-  cors: {
-    origin: '*',
-    methods: ['GET', 'POST'],
-    credentials: true
-  },
+  cors: corsOptions,
   transports: ['websocket', 'polling'],
   pingTimeout: 60000,
-  pingInterval: 25000
+  pingInterval: 25000,
+  reconnection: true,
+  reconnectionDelay: 1000,
+  reconnectionDelayMax: 5000
 });
 
 // Middleware
-app.use(cors());
+app.use(cors(corsOptions));
 app.use(express.json());
 app.use(rateLimit({
   windowMs: 60 * 1000, // 1 minute
@@ -61,6 +69,29 @@ app.post('/api/check-hotspots', async (req, res) => {
     res.json({ message: 'Hotspot check completed' });
   } catch (error) {
     res.status(500).json({ error: 'Failed to run hotspot check' });
+  }
+});
+
+// Manual trigger for duplicate cleanup
+app.post('/api/cleanup-duplicates', async (req, res) => {
+  try {
+    const results = await duplicateCleanupJob.cleanupAll();
+    res.json({ 
+      message: 'Duplicate cleanup completed',
+      results 
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to cleanup duplicates' });
+  }
+});
+
+// Get data quality report
+app.get('/api/data-quality', async (req, res) => {
+  try {
+    const report = await duplicateCleanupJob.getDataQualityReport();
+    res.json(report);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to generate data quality report' });
   }
 });
 
@@ -93,6 +124,17 @@ cron.schedule('*/30 * * * *', async () => {
   }
 });
 
+// Scheduled job: Run duplicate cleanup every Sunday at 3 AM
+cron.schedule('0 3 * * 0', async () => {
+  console.log('🧹 Running scheduled duplicate cleanup...');
+  try {
+    await duplicateCleanupJob.cleanupAll();
+    console.log('✅ Scheduled duplicate cleanup completed');
+  } catch (error) {
+    console.error('❌ Scheduled duplicate cleanup failed:', error);
+  }
+});
+
 // Export for use in other modules
 export { io };
 
@@ -104,12 +146,16 @@ async function startServer() {
     await dataSourceManager.initialize();
     console.log('✅ DataSourceManager initialized');
 
+    initializeSourceEventSubscriber();
+    console.log('✅ Source event subscriber initialized');
+
     httpServer.listen(PORT, () => {
       console.log(`
   🔥 热点监控服务启动成功!
   📡 Server running on http://localhost:${PORT}
   🔌 WebSocket ready
   ⏰ Hotspot check scheduled every 30 minutes
+  🧹 Duplicate cleanup scheduled every Sunday at 3 AM
       `);
     });
   } catch (error) {

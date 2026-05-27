@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "type": "module",
   "main": "dist/index.js",
+  "workspaces": [
+    "../packages/*"
+  ],
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
@@ -19,6 +22,7 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "@hot-monitor/types": "^1.0.0",
     "@openrouter/sdk": "^0.5.1",
     "@prisma/client": "^6.19.2",
     "axios": "^1.13.4",

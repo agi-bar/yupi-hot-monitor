@@ -2,7 +2,7 @@ export interface SearchResult {
   title: string;
   content: string;
   url: string;
-  source: 'twitter' | 'bing' | 'google' | 'duckduckgo' | 'hackernews' | 'sogou' | 'bilibili' | 'weibo';
+  source: 'twitter' | 'bing' | 'google' | 'duckduckgo' | 'hackernews' | 'sogou' | 'bilibili' | 'weibo' | 'weixin';
   sourceId?: string;
   publishedAt?: Date;
   viewCount?: number;
@@ -20,6 +20,7 @@ export interface SearchResult {
     followers?: number;
     verified?: boolean;
   };
+  rawUrl?: string;
 }
 
 // Twitter 质量过滤配置

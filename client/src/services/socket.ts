@@ -4,9 +4,15 @@ let socket: Socket | null = null;
 
 export function getSocket(): Socket {
   if (!socket) {
-    socket = io(window.location.origin, {
+    const wsUrl = import.meta.env.VITE_WS_URL || window.location.origin;
+    
+    socket = io(wsUrl, {
       path: '/socket.io',
-      transports: ['websocket', 'polling']
+      transports: ['websocket', 'polling'],
+      reconnection: true,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000,
+      reconnectionAttempts: 5
     });
 
     socket.on('connect', () => {
@@ -18,7 +24,15 @@ export function getSocket(): Socket {
     });
 
     socket.on('connect_error', (error) => {
-      console.error('🔌 Socket connection error:', error);
+      console.error('🔌 Socket connection error:', error.message);
+    });
+
+    socket.on('reconnect', (attemptNumber) => {
+      console.log('🔌 Socket reconnected after', attemptNumber, 'attempts');
+    });
+
+    socket.on('reconnect_error', (error) => {
+      console.warn('🔌 Socket reconnection error:', error.message);
     });
   }
 

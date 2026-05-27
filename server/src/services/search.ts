@@ -1,6 +1,8 @@
 import axios from 'axios';
 import * as cheerio from 'cheerio';
 import type { SearchResult } from '../types.js';
+import { extractRealUrlFromBing, resolveRedirectUrl, extractRealUrlFromBaidu } from '../utils/urlResolver.js';
+import { parseSearchEngineDate } from '../utils/dateParser.js';
 
 // User Agent 列表
 const USER_AGENTS = [
@@ -61,25 +63,81 @@ export async function searchBing(query: string): Promise<SearchResult[]> {
     $('li.b_algo').each((_, element) => {
       const titleElement = $(element).find('h2 a');
       const title = titleElement.text().trim();
-      const url = titleElement.attr('href');
+      const rawUrl = titleElement.attr('href');
       const snippet = $(element).find('.b_caption p').text().trim();
 
-      if (title && url && url.startsWith('http')) {
+      // 提取时间信息
+      let publishedAt: Date | undefined;
+      const dateElement = $(element).find('.news_dt, .b_att, [attrib="date"]').first();
+      if (dateElement.length > 0) {
+        const dateStr = dateElement.text().trim();
+        publishedAt = parseSearchEngineDate(dateStr) || undefined;
+      }
+
+      if (title && rawUrl && rawUrl.startsWith('http')) {
         results.push({
           title,
           content: snippet,
-          url,
-          source: 'bing'
+          url: rawUrl,
+          source: 'bing',
+          rawUrl,
+          publishedAt
         });
       }
     });
 
     console.log(`Bing search for "${query}": found ${results.length} results`);
-    return results;
+    
+    const resolvedResults = await resolveSearchEngineUrls(results);
+    return resolvedResults;
   } catch (error) {
     console.error('Bing search error:', error);
     return [];
   }
+}
+
+async function resolveSearchEngineUrls(results: SearchResult[]): Promise<SearchResult[]> {
+  const resolvedResults: SearchResult[] = [];
+
+  for (const result of results) {
+    if (result.rawUrl) {
+      if (result.rawUrl.includes('bing.com/') && (result.rawUrl.includes('/cr?') || result.rawUrl.includes('/redirect'))) {
+        const extractedUrl = extractRealUrlFromBing(result.rawUrl);
+        if (extractedUrl) {
+          resolvedResults.push({ ...result, url: extractedUrl });
+          continue;
+        }
+        
+        const resolveResult = await resolveRedirectUrl(result.rawUrl);
+        if (resolveResult.success) {
+          resolvedResults.push({ ...result, url: resolveResult.realUrl });
+        } else {
+          resolvedResults.push(result);
+        }
+        continue;
+      }
+
+      if (result.rawUrl.includes('baidu.com/link')) {
+        const extractedUrl = extractRealUrlFromBaidu(result.rawUrl);
+        if (extractedUrl) {
+          resolvedResults.push({ ...result, url: extractedUrl });
+          continue;
+        }
+        
+        const resolveResult = await resolveRedirectUrl(result.rawUrl);
+        if (resolveResult.success) {
+          resolvedResults.push({ ...result, url: resolveResult.realUrl });
+        } else {
+          resolvedResults.push(result);
+        }
+        continue;
+      }
+    }
+
+    resolvedResults.push(result);
+  }
+
+  return resolvedResults;
 }
 
 export async function searchGoogle(query: string): Promise<SearchResult[]> {
@@ -110,12 +168,21 @@ export async function searchGoogle(query: string): Promise<SearchResult[]> {
       const url = linkElement.attr('href');
       const snippet = $(element).find('.VwiC3b').text().trim();
 
+      // 提取时间信息
+      let publishedAt: Date | undefined;
+      const dateElement = $(element).find('.MUxGbd, .出的时间, [data-date]').first();
+      if (dateElement.length > 0) {
+        const dateStr = dateElement.text().trim();
+        publishedAt = parseSearchEngineDate(dateStr) || undefined;
+      }
+
       if (title && url && url.startsWith('http')) {
         results.push({
           title,
           content: snippet,
           url,
-          source: 'google'
+          source: 'google',
+          publishedAt
         });
       }
     });
@@ -165,12 +232,21 @@ export async function searchDuckDuckGo(query: string): Promise<SearchResult[]> {
         }
       }
 
+      // 提取时间信息
+      let publishedAt: Date | undefined;
+      const dateElement = $(element).find('.result__timestamp').first();
+      if (dateElement.length > 0) {
+        const dateStr = dateElement.text().trim();
+        publishedAt = parseSearchEngineDate(dateStr) || undefined;
+      }
+
       if (title && url && url.startsWith('http')) {
         results.push({
           title,
           content: snippet,
           url,
-          source: 'duckduckgo'
+          source: 'duckduckgo',
+          publishedAt
         });
       }
     });

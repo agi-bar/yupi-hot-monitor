@@ -5,11 +5,90 @@ import { searchBing, searchHackerNews, deduplicateResults } from '../services/se
 import { searchSogou, searchBilibili, searchWeibo, searchWeixin, detectAndFetchAccount } from '../services/chinaSearch.js';
 import { analyzeContent, expandKeyword, preMatchKeyword } from '../services/ai.js';
 import { sendHotspotEmail } from '../services/email.js';
+import { redisClient as redis } from '../utils/redis.js';
 import type { SearchResult } from '../types.js';
 
 // 新鲜度过滤：丢弃超过指定小时数的内容
 // Twitter 层面已通过 since: 限制了时间范围，这里只做兜底
 const MAX_AGE_HOURS = 7 * 24; // 7天
+
+// 缓存过期时间：24小时（与软去重时间窗口一致）
+const CACHE_EXPIRE_SECONDS = 24 * 60 * 60;
+
+// 去重缓存键前缀
+const DEDUP_CACHE_PREFIX = 'hotspot:dedup:';
+
+// 增强的去重函数：使用Redis缓存实现持久化去重
+async function deduplicateWithCache(
+  results: SearchResult[],
+  keywordId: string
+): Promise<SearchResult[]> {
+  if (results.length === 0) return [];
+  
+  const dedupedResults: SearchResult[] = [];
+  const cacheKeys: string[] = [];
+  
+  for (const item of results) {
+    // 生成缓存键：使用 title + source 作为去重依据
+    const cacheKey = `${DEDUP_CACHE_PREFIX}${item.source}:${item.title}`;
+    cacheKeys.push(cacheKey);
+    
+    try {
+      // 检查Redis缓存
+      const cached = await redis.get(cacheKey);
+      
+      if (cached) {
+        // 缓存命中，说明已存在，跳过
+        console.log(`  ⏭️  Skipped (cached): ${item.title.slice(0, 30)}...`);
+        continue;
+      }
+      
+      // 检查数据库（作为兜底）
+      const existing = await prisma.hotspot.findFirst({
+        where: {
+          OR: [
+            { url: item.url, source: item.source },
+            { title: item.title, source: item.source }
+          ]
+        }
+      });
+      
+      if (existing) {
+        // 数据库中存在，设置缓存防止后续重复
+        await redis.setEx(cacheKey, CACHE_EXPIRE_SECONDS, '1');
+        console.log(`  ⏭️  Skipped (DB): ${item.title.slice(0, 30)}...`);
+        continue;
+      }
+      
+      // 既不在缓存也不在数据库，添加到结果集
+      dedupedResults.push(item);
+      
+      // 设置缓存
+      await redis.setEx(cacheKey, CACHE_EXPIRE_SECONDS, '1');
+      
+    } catch (error) {
+      // Redis出错时，保守处理：跳过该项
+      console.error(`  ⚠️  Cache error for ${item.title.slice(0, 30)}:`, error);
+      // 仍然检查数据库
+      const existing = await prisma.hotspot.findFirst({
+        where: {
+          OR: [
+            { url: item.url, source: item.source },
+            { title: item.title, source: item.source }
+          ]
+        }
+      });
+      
+      if (!existing) {
+        dedupedResults.push(item);
+      }
+    }
+  }
+  
+  console.log(`  📊 Deduplication: ${results.length} → ${dedupedResults.length} (${results.length - dedupedResults.length} filtered)`);
+  
+  return dedupedResults;
+}
 
 function filterByFreshness(results: SearchResult[]): SearchResult[] {
   const cutoff = new Date(Date.now() - MAX_AGE_HOURS * 3600 * 1000);
@@ -36,6 +115,37 @@ function prioritizeResults(results: SearchResult[]): SearchResult[] {
   return [...results].sort((a, b) => {
     return (priorityMap[a.source] || 99) - (priorityMap[b.source] || 99);
   });
+}
+
+// 实时软去重函数：清理同一标题+来源的重复记录
+// 保留最新插入的记录，删除其他的
+async function cleanupRecentDuplicates(
+  newestId: string,
+  title: string,
+  source: string
+): Promise<number> {
+  try {
+    // 删除相同 title + source 的旧记录（保留传入的这条）
+    const result = await prisma.hotspot.deleteMany({
+      where: {
+        title: title,
+        source: source,
+        NOT: { id: newestId }
+      }
+    });
+    
+    if (result.count > 0) {
+      console.log(`  🧹 Soft deduplication: removed ${result.count} duplicate(s) for "${title.slice(0, 30)}..."`);
+      
+      // 同时清理这些记录的通知
+      // 注意：这里只清理了重复的热点，没清理通知（通知可能需要单独处理）
+    }
+    
+    return result.count;
+  } catch (error) {
+    console.error(`  ⚠️  Failed to cleanup duplicates for "${title.slice(0, 30)}":`, error);
+    return 0;
+  }
 }
 
 export async function runHotspotCheck(io: Server): Promise<void> {
@@ -121,7 +231,8 @@ export async function runHotspotCheck(io: Server): Promise<void> {
       }
 
       // 去重 → 新鲜度过滤 → 按来源优先级排序
-      const uniqueResults = deduplicateResults(allResults);
+      // 使用增强的去重函数（Redis缓存 + 数据库兜底）
+      const uniqueResults = await deduplicateWithCache(allResults, keyword.id);
       const freshResults = filterByFreshness(uniqueResults);
       const sortedResults = prioritizeResults(freshResults);
       console.log(`  Total: ${allResults.length} raw → ${uniqueResults.length} unique → ${freshResults.length} fresh (within ${MAX_AGE_HOURS}h)`);
@@ -146,18 +257,6 @@ export async function runHotspotCheck(io: Server): Promise<void> {
         }
         if (twitterProcessed + otherProcessed >= TWITTER_QUOTA + OTHER_QUOTA) break;
         try {
-          // 检查是否已存在
-          const existing = await prisma.hotspot.findFirst({
-            where: {
-              url: item.url,
-              source: item.source
-            }
-          });
-
-          if (existing) {
-            continue;
-          }
-
           // AI 分析（传入关键词和预匹配结果）
           const fullText = item.title + '\n' + item.content;
           const preMatch = preMatchKeyword(fullText, expandedKeywords);
@@ -181,44 +280,69 @@ export async function runHotspotCheck(io: Server): Promise<void> {
             continue;
           }
 
-          // 保存热点
-          const hotspot = await prisma.hotspot.create({
-            data: {
-              title: item.title,
-              content: item.content,
-              url: item.url,
-              source: item.source,
-              sourceId: item.sourceId || null,
-              isReal: analysis.isReal,
-              relevance: analysis.relevance,
-              relevanceReason: analysis.relevanceReason || null,
-              keywordMentioned: analysis.keywordMentioned ?? null,
-              importance: analysis.importance,
-              summary: analysis.summary,
-              viewCount: item.viewCount || null,
-              likeCount: item.likeCount || null,
-              retweetCount: item.retweetCount || null,
-              replyCount: item.replyCount || null,
-              commentCount: item.commentCount || null,
-              quoteCount: item.quoteCount || null,
-              danmakuCount: item.danmakuCount || null,
-              authorName: item.author?.name || null,
-              authorUsername: item.author?.username || null,
-              authorAvatar: item.author?.avatar || null,
-              authorFollowers: item.author?.followers || null,
-              authorVerified: item.author?.verified ?? null,
-              publishedAt: item.publishedAt || null,
-              keywordId: keyword.id
-            },
-            include: {
-              keyword: true
+          // 保存热点（使用upsert防止并发重复）
+          // 同时使用 url+source 和 title+source 作为唯一键
+          let hotspot;
+          try {
+            hotspot = await prisma.hotspot.upsert({
+              where: {
+                url_source: {
+                  url: item.url,
+                  source: item.source
+                }
+              },
+              create: {
+                title: item.title,
+                content: item.content,
+                url: item.url,
+                source: item.source,
+                sourceId: item.sourceId || null,
+                isReal: analysis.isReal,
+                relevance: analysis.relevance,
+                relevanceReason: analysis.relevanceReason || null,
+                keywordMentioned: analysis.keywordMentioned ?? null,
+                importance: analysis.importance,
+                summary: analysis.summary,
+                viewCount: item.viewCount || null,
+                likeCount: item.likeCount || null,
+                retweetCount: item.retweetCount || null,
+                replyCount: item.replyCount || null,
+                commentCount: item.commentCount || null,
+                quoteCount: item.quoteCount || null,
+                danmakuCount: item.danmakuCount || null,
+                authorName: item.author?.name || null,
+                authorUsername: item.author?.username || null,
+                authorAvatar: item.author?.avatar || null,
+                authorFollowers: item.author?.followers || null,
+                authorVerified: item.author?.verified ?? null,
+                publishedAt: item.publishedAt || null,
+                keywordId: keyword.id
+              },
+              update: {},  // 已存在则不更新
+              include: {
+                keyword: true
+              }
+            });
+          } catch (error) {
+            // 如果是唯一约束冲突，说明并发情况下已存在
+            if ((error as { code?: string }).code === 'P2002') {
+              console.log(`  ⏭️  Skipped (duplicate): ${item.title.slice(0, 30)}...`);
+              continue;
             }
-          });
+            throw error;
+          }
 
           newHotspotsCount++;
           if (item.source === 'twitter') twitterProcessed++;
           else otherProcessed++;
           console.log(`  ✅ New hotspot [${item.source}]: ${hotspot.title.slice(0, 40)}... (${analysis.importance})`);
+
+          // 实时软去重：清理该标题的其他重复记录（保留最新插入的这条）
+          try {
+            await cleanupRecentDuplicates(hotspot.id, hotspot.title, hotspot.source);
+          } catch (error) {
+            console.error(`  ⚠️  Soft deduplication error:`, error);
+          }
 
           // 创建通知
           await prisma.notification.create({

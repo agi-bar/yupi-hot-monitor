@@ -3,6 +3,7 @@ import { prisma } from '../db.js';
 import { dataSourceManager } from '../datasources/DataSourceManager.js';
 import { sanitizeSource, sanitizeSources } from '../middleware/sanitizeResponse.js';
 import { logError, logInfo } from '../utils/logger.js';
+import { sourceEvents } from '../events/sourceEvents.js';
 
 const router = Router();
 
@@ -163,6 +164,7 @@ router.post('/', async (req, res) => {
     const {
       name,
       type,
+      dataSourceId,
       category,
       description,
       config,
@@ -175,62 +177,49 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ error: 'Name and type are required' });
     }
 
-    // 校验type是否为有效的数据源类型
-    const registeredTypes = dataSourceManager.getRegisteredTypes();
-    if (!dataSourceManager.isValidType(type)) {
+    const resolvedDataSourceId = dataSourceId || type;
+
+    if (!dataSourceManager.isValidType(resolvedDataSourceId)) {
       return res.status(400).json({ 
         error: 'Invalid source type',
-        validTypes: registeredTypes
+        validTypes: dataSourceManager.getRegisteredTypes()
       });
     }
 
-    // 检查名称唯一性
-    const existingByName = await prisma.source.findUnique({
-      where: { name }
-    });
-
-    if (existingByName) {
-      return res.status(400).json({ error: 'Source name already exists' });
-    }
-
-    const source = await prisma.source.create({
-      data: {
-        name,
-        type,
-        category,
-        description,
-        config: config ? JSON.stringify(config) : null,
-        priority,
-        isPublic,
-        allowedRoles: allowedRoles ? JSON.stringify(allowedRoles) : null
-      }
-    });
-
-    // 同步到DataSourceManager
     try {
-      // 使用 type 作为数据源标识符，而非数据库UUID
-      const sourceId = source.type;
-      
-      // 检查是否为有效的数据源类型
-      const registeredTypes = dataSourceManager.getRegisteredTypes();
-      if (!registeredTypes.includes(sourceId)) {
-        console.warn(`[Sources API] ⚠️ Source type ${sourceId} is not registered in DataSourceManager, skipping sync. Registered types: ${registeredTypes.join(', ')}`);
-      } else {
-        const configData = config || {
-          id: sourceId,
-          name: source.name,
-          enabled: source.status === 'active'
-        };
-        await dataSourceManager.updateConfig(sourceId, configData);
-        logInfo('sources.create', `Created source ${sourceId} (${source.name}) and synced to DataSourceManager`);
-      }
-    } catch (error) {
-      logError('sources.create.sync', error, { sourceType: source.type });
-      // DataSourceManager同步失败不影响来源创建成功
-      console.error(`[Sources API] ❌ Failed to sync source ${source.type} to DataSourceManager:`, error);
-    }
+      const source = await prisma.source.create({
+        data: {
+          name,
+          type,
+          dataSourceId: resolvedDataSourceId,
+          category,
+          description,
+          config: config ? JSON.stringify(config) : null,
+          priority,
+          isPublic,
+          allowedRoles: allowedRoles ? JSON.stringify(allowedRoles) : null
+        }
+      });
 
-    res.status(201).json(sanitizeSource(source));
+      sourceEvents.emitCreated({
+        id: source.id,
+        name: source.name,
+        type: source.type,
+        dataSourceId: source.dataSourceId,
+        status: source.status,
+        config: config || null
+      });
+
+      logInfo('sources.create', `Created source ${source.dataSourceId} (${source.name}), event emitted for DataSourceManager sync`);
+
+      res.status(201).json(sanitizeSource(source));
+    } catch (error: unknown) {
+      if ((error as { code?: string }).code === 'P2002') {
+        return res.status(400).json({ error: 'Source name already exists' });
+      }
+      logError('sources.create', error);
+      res.status(500).json({ error: 'Failed to create source' });
+    }
   } catch (error) {
     logError('sources.create', error);
     res.status(500).json({ error: 'Failed to create source' });
@@ -243,6 +232,7 @@ router.put('/:id', async (req, res) => {
     const {
       name,
       type,
+      dataSourceId,
       category,
       status,
       description,
@@ -252,79 +242,61 @@ router.put('/:id', async (req, res) => {
       allowedRoles
     } = req.body;
 
-    // 检查名称唯一性（排除自己）
-    if (name) {
-      const existing = await prisma.source.findFirst({
-        where: {
-          name,
-          NOT: { id: req.params.id }
+    const resolvedDataSourceId = dataSourceId || type;
+    
+    if (resolvedDataSourceId && !dataSourceManager.isValidType(resolvedDataSourceId)) {
+      return res.status(400).json({ 
+        error: 'Invalid source dataSourceId or type',
+        validTypes: dataSourceManager.getRegisteredTypes()
+      });
+    }
+
+    try {
+      const source = await prisma.source.update({
+        where: { id: req.params.id },
+        data: {
+          ...(name && { name }),
+          ...(type && { type }),
+          ...(dataSourceId && { dataSourceId }),
+          ...(category !== undefined && { category }),
+          ...(status && { status }),
+          ...(description !== undefined && { description }),
+          ...(config && { config: JSON.stringify(config) }),
+          ...(priority !== undefined && { priority }),
+          ...(isPublic !== undefined && { isPublic }),
+          ...(allowedRoles !== undefined && { 
+            allowedRoles: allowedRoles ? JSON.stringify(allowedRoles) : null 
+          })
         }
       });
 
-      if (existing) {
+      const changes: Record<string, unknown> = {};
+      if (name) changes.name = name;
+      if (config) changes.config = config;
+      if (status) changes.status = status;
+      if (dataSourceId) changes.dataSourceId = dataSourceId;
+
+      if (Object.keys(changes).length > 0) {
+        sourceEvents.emitUpdated({
+          id: source.id,
+          dataSourceId: source.dataSourceId,
+          changes
+        });
+        logInfo('sources.update', `Updated source ${source.dataSourceId} (${source.name}), event emitted for DataSourceManager sync`);
+      }
+
+      res.json(sanitizeSource(source));
+    } catch (error: unknown) {
+      if ((error as { code?: string }).code === 'P2002') {
         return res.status(400).json({ error: 'Source name already exists' });
       }
-    }
-
-    // 校验type是否为有效的数据源类型（如果提供了type字段）
-    if (type) {
-      const registeredTypes = dataSourceManager.getRegisteredTypes();
-      if (!dataSourceManager.isValidType(type)) {
-        return res.status(400).json({ 
-          error: 'Invalid source type',
-          validTypes: registeredTypes
-        });
+      if ((error as { code?: string }).code === 'P2025') {
+        return res.status(404).json({ error: 'Source not found' });
       }
+      logError('sources.update', error);
+      res.status(500).json({ error: 'Failed to update source' });
     }
-
-    const source = await prisma.source.update({
-      where: { id: req.params.id },
-      data: {
-        ...(name && { name }),
-        ...(type && { type }),
-        ...(category !== undefined && { category }),
-        ...(status && { status }),
-        ...(description !== undefined && { description }),
-        ...(config && { config: JSON.stringify(config) }),
-        ...(priority !== undefined && { priority }),
-        ...(isPublic !== undefined && { isPublic }),
-        ...(allowedRoles !== undefined && { 
-          allowedRoles: allowedRoles ? JSON.stringify(allowedRoles) : null 
-        })
-      }
-    });
-
-    // 同步到DataSourceManager
-    try {
-      // 使用 type 作为数据源标识符，而非数据库UUID
-      const sourceId = source.type;
-      
-      // 检查是否为有效的数据源类型
-      const registeredTypes = dataSourceManager.getRegisteredTypes();
-      if (!registeredTypes.includes(sourceId)) {
-        console.warn(`[Sources API] ⚠️ Source type ${sourceId} is not registered in DataSourceManager, skipping sync. Registered types: ${registeredTypes.join(', ')}`);
-      } else {
-        const updateData: any = {};
-        if (name) updateData.name = source.name;
-        if (config) Object.assign(updateData, config);
-        if (status) updateData.enabled = status === 'active';
-        
-        if (Object.keys(updateData).length > 0) {
-        await dataSourceManager.updateConfig(sourceId, updateData);
-        logInfo('sources.update', `Updated source ${sourceId} (${source.name}) and synced to DataSourceManager`);
-      }
-      }
-    } catch (error) {
-      logError('sources.update.sync', error, { sourceType: source.type });
-      // DataSourceManager同步失败不影响来源更新成功
-      console.error(`[Sources API] ❌ Failed to sync source ${source.type} to DataSourceManager:`, error);
-    }
-
-    res.json(sanitizeSource(source));
-  } catch (error: any) {
-    if (error.code === 'P2025') {
-      return res.status(404).json({ error: 'Source not found' });
-    }
+  } catch (error) {
     logError('sources.update', error);
     res.status(500).json({ error: 'Failed to update source' });
   }
@@ -335,26 +307,41 @@ router.delete('/:id', async (req, res) => {
   try {
     const dbId = req.params.id;
     
-    // 先查询获取 type 信息
     const source = await prisma.source.findUnique({
-      where: { id: dbId }
+      where: { id: dbId },
+      include: {
+        _count: {
+          select: { hotspots: true }
+        }
+      }
     });
     
     if (!source) {
       return res.status(404).json({ error: 'Source not found' });
+    }
+
+    if (source._count.hotspots > 0) {
+      return res.status(400).json({ 
+        error: 'Cannot delete source with associated hotspots',
+        message: `该来源关联了 ${source._count.hotspots} 条热点，请先删除关联的热点数据`,
+        hotspotCount: source._count.hotspots
+      });
     }
     
     await prisma.source.delete({
       where: { id: dbId }
     });
 
-    // 使用 type 作为数据源标识符
-    await dataSourceManager.removeSource(source.type);
-    logInfo('sources.delete', `Deleted source ${source.type} (${source.name}) and removed from DataSourceManager`);
+    sourceEvents.emitDeleted({
+      id: source.id,
+      name: source.name,
+      dataSourceId: source.dataSourceId
+    });
+    logInfo('sources.delete', `Deleted source ${source.dataSourceId} (${source.name}), event emitted for DataSourceManager sync`);
 
     res.status(204).send();
-  } catch (error: any) {
-    if (error.code === 'P2025') {
+  } catch (error: unknown) {
+    if ((error as { code?: string }).code === 'P2025') {
       return res.status(404).json({ error: 'Source not found' });
     }
     logError('sources.delete', error);
@@ -371,7 +358,6 @@ router.post('/batch-delete', async (req, res) => {
       return res.status(400).json({ error: 'IDs array is required' });
     }
 
-    // 添加二次确认验证
     if (confirm !== true) {
       return res.status(400).json({ 
         error: 'Confirmation required',
@@ -379,25 +365,44 @@ router.post('/batch-delete', async (req, res) => {
       });
     }
 
-    // 先查询获取所有 type 信息
     const sources = await prisma.source.findMany({
       where: { id: { in: ids } },
-      select: { id: true, type: true, name: true }
+      include: {
+        _count: {
+          select: { hotspots: true }
+        }
+      }
     });
 
     if (sources.length === 0) {
       return res.status(404).json({ error: 'No sources found' });
     }
 
-    // 使用 type 作为数据源标识符
-    const sourceIds = sources.map(s => s.type);
+    const sourcesWithHotspots = sources.filter(s => s._count.hotspots > 0);
+    if (sourcesWithHotspots.length > 0) {
+      return res.status(400).json({ 
+        error: 'Cannot delete sources with associated hotspots',
+        message: `以下来源关联了热点数据，请先删除关联的热点数据`,
+        sourcesWithHotspots: sourcesWithHotspots.map(s => ({
+          id: s.id,
+          name: s.name,
+          hotspotCount: s._count.hotspots
+        }))
+      });
+    }
 
     await prisma.source.deleteMany({
       where: { id: { in: ids } }
     });
 
-    await dataSourceManager.removeSources(sourceIds);
-    logInfo('sources.batchDelete', `Batch deleted ${sources.length} sources and removed from DataSourceManager`);
+    for (const source of sources) {
+      sourceEvents.emitDeleted({
+        id: source.id,
+        name: source.name,
+        dataSourceId: source.dataSourceId
+      });
+    }
+    logInfo('sources.batchDelete', `Batch deleted ${sources.length} sources, events emitted for DataSourceManager sync`);
 
     res.json({ message: 'Sources deleted successfully', count: sources.length });
   } catch (error) {
@@ -467,6 +472,48 @@ router.post('/import', async (req, res) => {
       });
     }
 
+    // P0: 导入前校验 - 检查type唯一性
+    const typeCount = new Map<string, number>();
+    const nameCount = new Map<string, number>();
+    
+    for (const source of sources) {
+      if (!source.name || !source.type) continue;
+      
+      typeCount.set(source.type, (typeCount.get(source.type) || 0) + 1);
+      nameCount.set(source.name, (nameCount.get(source.name) || 0) + 1);
+    }
+    
+    // 检查导入数据内部的type重复
+    const internalTypeDuplicates = [...typeCount.entries()]
+      .filter(([_, count]) => count > 1)
+      .map(([type]) => type);
+    
+    if (internalTypeDuplicates.length > 0) {
+      return res.status(400).json({ 
+        error: 'IMPORT_TYPE_DUPLICATE',
+        message: '批量导入中存在重复的type字段',
+        duplicateTypes: internalTypeDuplicates,
+        details: '每个type只能导入一次'
+      });
+    }
+    
+    // 检查与现有数据库的type冲突
+    for (const [type] of typeCount) {
+      const existing = await prisma.source.findFirst({ where: { type } });
+      if (existing) {
+        return res.status(400).json({ 
+          error: 'IMPORT_TYPE_EXISTS',
+          message: `type='${type}'已存在于来源'${existing.name}'`,
+          existingSource: {
+            id: existing.id,
+            name: existing.name,
+            type: existing.type
+          },
+          suggestion: '请使用唯一的type值或先删除现有来源'
+        });
+      }
+    }
+
     const results = {
       success: 0,
       failed: 0,
@@ -482,11 +529,11 @@ router.post('/import', async (req, res) => {
           continue;
         }
 
-        // 验证 type 是否为有效的数据源类型
-        const registeredTypes = dataSourceManager.getRegisteredTypes();
-        if (!dataSourceManager.isValidType(source.type)) {
+        const resolvedDataSourceId = source.dataSourceId || source.type;
+        
+        if (!dataSourceManager.isValidType(resolvedDataSourceId)) {
           results.failed++;
-          results.errors.push(`Invalid type '${source.type}' for ${source.name}. Valid types: ${registeredTypes.join(', ')}`);
+          results.errors.push(`Invalid dataSourceId or type '${resolvedDataSourceId}' for ${source.name}. Valid types: ${dataSourceManager.getRegisteredTypes().join(', ')}`);
           continue;
         }
 
@@ -494,6 +541,7 @@ router.post('/import', async (req, res) => {
           where: { name: source.name },
           update: {
             type: source.type,
+            dataSourceId: resolvedDataSourceId,
             category: source.category,
             status: source.status,
             priority: source.priority,
@@ -502,6 +550,7 @@ router.post('/import', async (req, res) => {
           create: {
             name: source.name,
             type: source.type,
+            dataSourceId: resolvedDataSourceId,
             category: source.category,
             status: source.status || 'active',
             priority: source.priority || 0,
@@ -509,16 +558,13 @@ router.post('/import', async (req, res) => {
           }
         });
         
-        try {
-          // 使用 type 作为数据源标识符
-          await dataSourceManager.updateConfig(upserted.type, {
-            id: upserted.type,
-            name: upserted.name,
-            enabled: upserted.status === 'active'
-          });
-        } catch (syncError) {
-          logError('sources.import.sync', syncError, { sourceName: upserted.name });
-        }
+        sourceEvents.emitCreated({
+          id: upserted.id,
+          name: upserted.name,
+          type: upserted.type,
+          dataSourceId: upserted.dataSourceId,
+          status: upserted.status
+        });
         
         results.success++;
       } catch (error) {
@@ -539,7 +585,7 @@ router.post('/:id/stats', async (req, res) => {
   try {
     const { type, increment = 1 } = req.body;
 
-    const updateData: any = {};
+    const updateData: Record<string, unknown> = {};
     switch (type) {
       case 'request':
         updateData.totalRequests = { increment };
@@ -571,8 +617,8 @@ router.post('/:id/stats', async (req, res) => {
         ? ((source.successCount / source.totalRequests) * 100).toFixed(2) + '%'
         : '0%'
     });
-  } catch (error: any) {
-    if (error.code === 'P2025') {
+  } catch (error: unknown) {
+    if ((error as { code?: string }).code === 'P2025') {
       return res.status(404).json({ error: 'Source not found' });
     }
     logError('sources.updateStats', error);

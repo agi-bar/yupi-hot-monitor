@@ -2,6 +2,7 @@ import axios from 'axios';
 import * as cheerio from 'cheerio';
 import crypto from 'crypto';
 import type { SearchResult } from '../types.js';
+import { parseSearchEngineDate, parseWeixinDate } from '../utils/dateParser.js';
 
 // User Agent 列表
 const USER_AGENTS = [
@@ -75,13 +76,22 @@ export async function searchSogou(query: string): Promise<SearchResult[]> {
       const snippet = $(element).find('.space-txt, .str-text-info, .str_info, .text-layout').text().trim()
         || $(element).find('p').first().text().trim();
 
+      // 提取时间信息
+      let publishedAt: Date | undefined;
+      const dateElement = $(element).find('.vrt time, .time, [date-time]').first();
+      if (dateElement.length > 0) {
+        const dateStr = dateElement.text().trim() || dateElement.attr('date-time') || '';
+        publishedAt = parseSearchEngineDate(dateStr) || undefined;
+      }
+
       // 排除广告和无关结果
       if (title && url && !title.includes('大家还在搜')) {
         results.push({
           title,
           content: snippet || title,
           url,
-          source: 'sogou' as const
+          source: 'sogou' as const,
+          publishedAt
         });
       }
     });
@@ -493,16 +503,7 @@ export async function searchWeixin(query: string): Promise<SearchResult[]> {
           url = 'https://weixin.sogou.com' + url;
         }
 
-        let publishedAt: Date | undefined;
-        if (dateStr) {
-          const now = new Date();
-          if (dateStr.includes('昨天')) {
-            now.setDate(now.getDate() - 1);
-            publishedAt = now;
-          } else if (dateStr.includes('前')) {
-            publishedAt = new Date();
-          }
-        }
+        const publishedAt = dateStr ? parseWeixinDate(dateStr) || undefined : undefined;
 
         results.push({
           title,

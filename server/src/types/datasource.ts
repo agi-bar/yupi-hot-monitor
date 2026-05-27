@@ -70,6 +70,7 @@ export interface SearchResult {
     followers?: number;
     verified?: boolean;
   };
+  rawUrl?: string;
 }
 
 export interface BaseDataSource {

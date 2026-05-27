@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Search, Plus, Edit2, Trash2, Download, BarChart3,
@@ -6,7 +6,16 @@ import {
   Globe, Twitter, MessageSquare, Activity, Settings
 } from 'lucide-react';
 import { cn } from '../lib/utils';
-import { sourcesApi, type Source, type SourceStats } from '../services/sources';
+import { sourcesApi } from '../services/sources';
+import { useSourcesFilters } from '../hooks';
+import {
+  type Source,
+  type SourceStats,
+  SOURCE_TYPE_OPTIONS,
+  SOURCE_STATUS_OPTIONS
+} from '@hot-monitor/types';
+
+const PAGE_SIZE = 10;
 
 interface SourcesManagerProps {
   onSourceSelect?: (source: Source) => void;
@@ -16,59 +25,66 @@ export default function SourcesManager({ onSourceSelect }: SourcesManagerProps) 
   const [sources, setSources] = useState<Source[]>([]);
   const [stats, setStats] = useState<SourceStats | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [showModal, setShowModal] = useState(false);
   const [editingSource, setEditingSource] = useState<Source | null>(null);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  const [isExporting, setIsExporting] = useState(false);
 
-  // Filters
-  const [filters, setFilters] = useState({
-    type: '',
-    category: '',
-    status: '',
-    search: ''
-  });
+  const {
+    filters,
+    debouncedFilters,
+    page,
+    updateFilters,
+    resetFilters,
+    setSearch,
+    goToNextPage,
+    goToPrevPage,
+    setPage
+  } = useSourcesFilters();
 
   const loadSources = useCallback(async () => {
     setIsLoading(true);
     try {
       const params = {
-        page: currentPage,
-        limit: 10,
-        ...filters
+        page,
+        limit: PAGE_SIZE,
+        type: debouncedFilters.type || undefined,
+        category: debouncedFilters.category || undefined,
+        status: debouncedFilters.status || undefined,
+        search: debouncedFilters.search || undefined
       };
       const data = await sourcesApi.getAll(params);
       setSources(data.data);
       setStats(data.stats);
       setTotalPages(data.pagination.totalPages);
-    } catch (error) {
+    } catch {
       showToast('加载来源失败', 'error');
     } finally {
       setIsLoading(false);
     }
-  }, [currentPage, filters]);
+  }, [page, debouncedFilters.type, debouncedFilters.category, debouncedFilters.status, debouncedFilters.search]);
 
   useEffect(() => {
     loadSources();
   }, [loadSources]);
 
-  const showToast = (message: string, type: 'success' | 'error') => {
+  const showToast = useCallback((message: string, type: 'success' | 'error') => {
     setToast({ message, type });
     setTimeout(() => setToast(null), 3000);
-  };
+  }, []);
 
-  const handleCreate = () => {
+  const handleCreate = useCallback(() => {
     setEditingSource(null);
     setShowModal(true);
-  };
+  }, []);
 
-  const handleEdit = (source: Source) => {
+  const handleEdit = useCallback((source: Source) => {
     setEditingSource(source);
     setShowModal(true);
-  };
+  }, []);
 
-  const handleDelete = async (id: string) => {
+  const handleDelete = useCallback(async (id: string) => {
     if (!confirm('确定要删除这个来源吗？')) return;
 
     try {
@@ -78,9 +94,10 @@ export default function SourcesManager({ onSourceSelect }: SourcesManagerProps) 
     } catch {
       showToast('删除失败', 'error');
     }
-  };
+  }, [loadSources, showToast]);
 
-  const handleExport = async () => {
+  const handleExport = useCallback(async () => {
+    setIsExporting(true);
     try {
       const data = await sourcesApi.export();
       const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
@@ -93,31 +110,31 @@ export default function SourcesManager({ onSourceSelect }: SourcesManagerProps) 
       showToast('导出成功', 'success');
     } catch {
       showToast('导出失败', 'error');
+    } finally {
+      setIsExporting(false);
     }
-  };
+  }, [showToast]);
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'active': return 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20';
-      case 'paused': return 'text-amber-400 bg-amber-500/10 border-amber-500/20';
-      case 'error': return 'text-red-400 bg-red-500/10 border-red-500/20';
-      default: return 'text-slate-400 bg-slate-500/10 border-slate-500/20';
-    }
-  };
+  const statusConfig = useMemo(() => ({
+    active: { label: '启用', className: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20' },
+    paused: { label: '暂停', className: 'text-amber-400 bg-amber-500/10 border-amber-500/20' },
+    error: { label: '错误', className: 'text-red-400 bg-red-500/10 border-red-500/20' }
+  }), []);
 
-  const getTypeIcon = (type: string) => {
-    switch (type) {
-      case 'twitter': return <Twitter className="w-4 h-4" />;
-      case 'weibo': return <MessageSquare className="w-4 h-4" />;
-      case 'bing':
-      case 'google': return <Globe className="w-4 h-4" />;
-      default: return <Activity className="w-4 h-4" />;
-    }
-  };
+  const typeIcons = useMemo(() => ({
+    twitter: <Twitter className="w-4 h-4" />,
+    weibo: <MessageSquare className="w-4 h-4" />,
+    bing: <Globe className="w-4 h-4" />,
+    google: <Globe className="w-4 h-4" />,
+    default: <Activity className="w-4 h-4" />
+  }), []);
+
+  const getTypeIcon = useCallback((type: string) => {
+    return typeIcons[type as keyof typeof typeIcons] || typeIcons.default;
+  }, [typeIcons]);
 
   return (
     <div className="space-y-6">
-      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-2xl font-bold text-white flex items-center gap-2">
@@ -130,9 +147,14 @@ export default function SourcesManager({ onSourceSelect }: SourcesManagerProps) 
         <div className="flex items-center gap-3">
           <button
             onClick={handleExport}
-            className="px-4 py-2 rounded-xl bg-white/5 border border-white/10 text-white hover:bg-white/10 transition-all flex items-center gap-2"
+            disabled={isExporting}
+            className="px-4 py-2 rounded-xl bg-white/5 border border-white/10 text-white hover:bg-white/10 transition-all flex items-center gap-2 disabled:opacity-50"
           >
-            <Download className="w-4 h-4" />
+            {isExporting ? (
+              <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+            ) : (
+              <Download className="w-4 h-4" />
+            )}
             导出
           </button>
           <button
@@ -145,7 +167,6 @@ export default function SourcesManager({ onSourceSelect }: SourcesManagerProps) 
         </div>
       </div>
 
-      {/* Stats Cards */}
       {stats && (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="p-4 rounded-xl bg-white/[0.02] border border-white/5">
@@ -163,7 +184,6 @@ export default function SourcesManager({ onSourceSelect }: SourcesManagerProps) 
         </div>
       )}
 
-      {/* Filters */}
       <div className="p-4 rounded-xl bg-white/[0.02] border border-white/5">
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <div className="relative">
@@ -172,33 +192,34 @@ export default function SourcesManager({ onSourceSelect }: SourcesManagerProps) 
               type="text"
               placeholder="搜索来源..."
               value={filters.search}
-              onChange={(e) => setFilters({ ...filters, search: e.target.value })}
+              onChange={(e) => setSearch(e.target.value)}
               className="w-full pl-10 pr-4 py-2 rounded-lg bg-white/5 border border-white/10 text-white placeholder-slate-600 focus:outline-none focus:border-blue-500/50"
             />
           </div>
           <select
             value={filters.type}
-            onChange={(e) => setFilters({ ...filters, type: e.target.value })}
+            onChange={(e) => updateFilters({ type: e.target.value })}
             className="px-4 py-2 rounded-lg bg-white/5 border border-white/10 text-white focus:outline-none focus:border-blue-500/50"
           >
             <option value="">全部类型</option>
-            <option value="twitter">Twitter</option>
-            <option value="weibo">微博</option>
-            <option value="bing">Bing</option>
-            <option value="google">Google</option>
+            {SOURCE_TYPE_OPTIONS.map(type => (
+              <option key={type} value={type}>{type}</option>
+            ))}
           </select>
           <select
             value={filters.status}
-            onChange={(e) => setFilters({ ...filters, status: e.target.value })}
+            onChange={(e) => updateFilters({ status: e.target.value })}
             className="px-4 py-2 rounded-lg bg-white/5 border border-white/10 text-white focus:outline-none focus:border-blue-500/50"
           >
             <option value="">全部状态</option>
-            <option value="active">启用</option>
-            <option value="paused">暂停</option>
-            <option value="error">错误</option>
+            {SOURCE_STATUS_OPTIONS.map(status => (
+              <option key={status} value={status}>
+                {status === 'active' ? '启用' : status === 'paused' ? '暂停' : '错误'}
+              </option>
+            ))}
           </select>
           <button
-            onClick={() => setFilters({ type: '', category: '', status: '', search: '' })}
+            onClick={resetFilters}
             className="px-4 py-2 rounded-lg bg-white/5 border border-white/10 text-white hover:bg-white/10 transition-all"
           >
             重置筛选
@@ -206,7 +227,6 @@ export default function SourcesManager({ onSourceSelect }: SourcesManagerProps) 
         </div>
       </div>
 
-      {/* Sources List */}
       {isLoading ? (
         <div className="flex items-center justify-center py-16">
           <div className="w-8 h-8 border-2 border-blue-500/30 border-t-blue-500 rounded-full animate-spin" />
@@ -244,9 +264,9 @@ export default function SourcesManager({ onSourceSelect }: SourcesManagerProps) 
                   <div className="flex flex-wrap items-center gap-2 text-xs">
                     <span className={cn(
                       "px-2 py-1 rounded-md border font-medium",
-                      getStatusColor(source.status)
+                      statusConfig[source.status]?.className
                     )}>
-                      {source.status === 'active' ? '启用' : source.status === 'paused' ? '暂停' : '错误'}
+                      {statusConfig[source.status]?.label}
                     </span>
                     {source.hotspotCount !== undefined && (
                       <span className="px-2 py-1 rounded-md bg-white/5 text-slate-400">
@@ -257,8 +277,8 @@ export default function SourcesManager({ onSourceSelect }: SourcesManagerProps) 
                       {source.totalRequests.toLocaleString()} 请求
                     </span>
                     <span className="px-2 py-1 rounded-md bg-white/5 text-slate-400">
-                      成功率 {source.totalRequests > 0 
-                        ? ((source.successCount / source.totalRequests) * 100).toFixed(1) 
+                      成功率 {source.totalRequests > 0
+                        ? ((source.successCount / source.totalRequests) * 100).toFixed(1)
                         : 0}%
                     </span>
                   </div>
@@ -299,22 +319,21 @@ export default function SourcesManager({ onSourceSelect }: SourcesManagerProps) 
         </div>
       )}
 
-      {/* Pagination */}
       {totalPages > 1 && (
         <div className="flex items-center justify-center gap-3">
           <button
-            onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-            disabled={currentPage <= 1}
+            onClick={goToPrevPage}
+            disabled={page <= 1}
             className="p-2 rounded-xl bg-white/5 border border-white/10 text-slate-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-all"
           >
             <ChevronLeft className="w-4 h-4" />
           </button>
           <span className="text-sm text-slate-500">
-            第 {currentPage} / {totalPages} 页
+            第 {page} / {totalPages} 页
           </span>
           <button
-            onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-            disabled={currentPage >= totalPages}
+            onClick={goToNextPage}
+            disabled={page >= totalPages}
             className="p-2 rounded-xl bg-white/5 border border-white/10 text-slate-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-all"
           >
             <ChevronRight className="w-4 h-4" />
@@ -322,7 +341,6 @@ export default function SourcesManager({ onSourceSelect }: SourcesManagerProps) 
         </div>
       )}
 
-      {/* Toast */}
       <AnimatePresence>
         {toast && (
           <motion.div
@@ -342,7 +360,6 @@ export default function SourcesManager({ onSourceSelect }: SourcesManagerProps) 
         )}
       </AnimatePresence>
 
-      {/* Modal */}
       <AnimatePresence>
         {showModal && (
           <SourceModal
@@ -376,10 +393,12 @@ function SourceModal({ source, onClose, onSave }: SourceModalProps) {
     isPublic: source?.isPublic ?? true
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSubmitting(true);
+    setError(null);
 
     try {
       if (source) {
@@ -388,8 +407,8 @@ function SourceModal({ source, onClose, onSave }: SourceModalProps) {
         await sourcesApi.create(formData);
       }
       onSave();
-    } catch (error) {
-      alert(error instanceof Error ? error.message : '操作失败');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '操作失败');
     } finally {
       setIsSubmitting(false);
     }
@@ -420,6 +439,12 @@ function SourceModal({ source, onClose, onSave }: SourceModalProps) {
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
+          {error && (
+            <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm">
+              {error}
+            </div>
+          )}
+
           <div>
             <label className="block text-sm font-medium text-slate-400 mb-2">来源名称 *</label>
             <input
@@ -441,10 +466,9 @@ function SourceModal({ source, onClose, onSave }: SourceModalProps) {
                 onChange={(e) => setFormData({ ...formData, type: e.target.value })}
                 className="w-full px-4 py-2 rounded-lg bg-white/5 border border-white/10 text-white focus:outline-none focus:border-blue-500/50"
               >
-                <option value="twitter">Twitter</option>
-                <option value="weibo">微博</option>
-                <option value="bing">Bing</option>
-                <option value="google">Google</option>
+                {SOURCE_TYPE_OPTIONS.map(type => (
+                  <option key={type} value={type}>{type}</option>
+                ))}
               </select>
             </div>
 
@@ -455,9 +479,11 @@ function SourceModal({ source, onClose, onSave }: SourceModalProps) {
                 onChange={(e) => setFormData({ ...formData, status: e.target.value as 'active' | 'paused' | 'error' })}
                 className="w-full px-4 py-2 rounded-lg bg-white/5 border border-white/10 text-white focus:outline-none focus:border-blue-500/50"
               >
-                <option value="active">启用</option>
-                <option value="paused">暂停</option>
-                <option value="error">错误</option>
+                {SOURCE_STATUS_OPTIONS.map(status => (
+                  <option key={status} value={status}>
+                    {status === 'active' ? '启用' : status === 'paused' ? '暂停' : '错误'}
+                  </option>
+                ))}
               </select>
             </div>
           </div>

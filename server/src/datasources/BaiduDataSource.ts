@@ -2,6 +2,7 @@ import * as cheerio from 'cheerio';
 import axios from 'axios';
 import type { SearchOptions, SearchResult } from '../types/datasource.js';
 import { BaseDataSource } from './BaseDataSource.js';
+import { extractRealUrlFromBaidu, resolveRedirectUrl } from '../utils/urlResolver.js';
 
 const USER_AGENTS = [
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -85,7 +86,7 @@ export class BaiduDataSource extends BaseDataSource {
     $('div.result, .c-container').each((_, element) => {
       const titleElement = $(element).find('h3 a, .t a').first();
       const title = titleElement.text().trim();
-      const url = titleElement.attr('href') || '';
+      const rawUrl = titleElement.attr('href') || '';
       
       const abstractElement = $(element).find('.c-abstract, .content-right_8Zs40').first();
       const abstract = abstractElement.text().trim();
@@ -96,7 +97,7 @@ export class BaiduDataSource extends BaseDataSource {
       const siteElement = $(element).find('.c-color-gray, .c-site_info').first();
       const siteName = siteElement.text().trim();
       
-      if (title && url && url.startsWith('http')) {
+      if (title && rawUrl && rawUrl.startsWith('http')) {
         let publishedAt: Date | undefined;
         if (timeText) {
           publishedAt = this.parseTime(timeText);
@@ -105,16 +106,48 @@ export class BaiduDataSource extends BaseDataSource {
         results.push({
           title,
           content: abstract || title,
-          url,
+          url: rawUrl,
           source: this.id,
           publishedAt,
-          author: siteName ? { name: siteName } : undefined
+          author: siteName ? { name: siteName } : undefined,
+          rawUrl: rawUrl
         });
       }
     });
     
     console.log(`Baidu search: found ${results.length} results`);
     return results;
+  }
+
+  async resolveUrls(results: SearchResult[]): Promise<SearchResult[]> {
+    const resolvedResults: SearchResult[] = [];
+    
+    for (const result of results) {
+      if (result.rawUrl && result.rawUrl.includes('baidu.com/link')) {
+        const extractedUrl = extractRealUrlFromBaidu(result.rawUrl);
+        if (extractedUrl) {
+          resolvedResults.push({
+            ...result,
+            url: extractedUrl
+          });
+          continue;
+        }
+        
+        const resolveResult = await resolveRedirectUrl(result.rawUrl);
+        if (resolveResult.success) {
+          resolvedResults.push({
+            ...result,
+            url: resolveResult.realUrl
+          });
+        } else {
+          resolvedResults.push(result);
+        }
+      } else {
+        resolvedResults.push(result);
+      }
+    }
+    
+    return resolvedResults;
   }
   
   private parseTime(timeText: string): Date | undefined {

@@ -23,7 +23,8 @@ model Keyword {
 model Source {
   id            String    @id @default(uuid())
   name          String    @unique
-  type          String    // twitter, bing, google, weibo, etc.
+  type          String    // twitter, bing, google, weibo, etc. (业务分类)
+  dataSourceId  String    // 运行时数据源标识符，解耦type与DataSourceManager
   category      String?   // social, search, news, etc.
   status        String    @default("active")  // active, paused, error
   priority      Int       @default(0)
@@ -48,6 +49,7 @@ model Source {
   updatedAt    DateTime  @updatedAt
   
   @@index([type])
+  @@index([dataSourceId])
   @@index([category])
   @@index([status])
 }
@@ -85,6 +87,7 @@ model Hotspot {
   sourceRecord    Source?   @relation(fields: [sourceRecordId], references: [id], onDelete: SetNull)
 
   @@unique([url, source])
+  @@unique([title, source])
   @@index([source])
   @@index([importance])
   @@index([keywordId])
