@@ -1,8 +1,9 @@
-import { OpenRouter } from '@openrouter/sdk';
+import Anthropic from '@anthropic-ai/sdk';
 import type { AIAnalysis } from '../types.js';
 
-const openRouter = new OpenRouter({
-  apiKey: process.env.OPENROUTER_API_KEY ?? ''
+const anthropic = new Anthropic({
+  baseURL: 'https://api.minimaxi.com/anthropic/v1',
+  apiKey: process.env.MINIMAX_API_KEY ?? ''
 });
 
 // ========== Query Expansion（查询扩展） ==========
@@ -23,19 +24,18 @@ export async function expandKeyword(keyword: string): Promise<string[]> {
   // 不管 AI 是否可用，先提取基础核心词
   const coreTerms = extractCoreTerms(keyword);
 
-  if (!process.env.OPENROUTER_API_KEY) {
+  if (!process.env.MINIMAX_API_KEY) {
     const result = [keyword, ...coreTerms];
     expansionCache.set(keyword, result);
     return result;
   }
 
   try {
-    const result = await openRouter.chat.send({
-      model: 'deepseek/deepseek-v3.2',
-      messages: [
-        {
-          role: 'system',
-          content: `你是一个搜索查询扩展专家。给定一个监控关键词，生成该关键词的变体和相关检索词，用于文本匹配。
+    const result = await anthropic.messages.create({
+      model: 'MiniMax-M2.5',
+      max_tokens: 300,
+      temperature: 0.2,
+      system: `你是一个搜索查询扩展专家。给定一个监控关键词，生成该关键词的变体和相关检索词，用于文本匹配。
 
 规则：
 1. 包含原始关键词的各种写法（大小写、空格、连字符变体）
@@ -46,19 +46,16 @@ export async function expandKeyword(keyword: string): Promise<string[]> {
 
 输出 JSON 数组，只输出 JSON，不要有其他内容。
 示例输入："Claude Sonnet 4.6"
-示例输出：["Claude Sonnet 4.6", "Claude Sonnet", "Sonnet 4.6", "claude-sonnet-4.6", "Claude 4.6", "Anthropic Sonnet"]`
-        },
+示例输出：["Claude Sonnet 4.6", "Claude Sonnet", "Sonnet 4.6", "claude-sonnet-4.6", "Claude 4.6", "Anthropic Sonnet"]`,
+      messages: [
         {
           role: 'user',
           content: keyword
         }
-      ],
-      temperature: 0.2,
-      maxTokens: 300
+      ]
     });
 
-    const rawContent = result.choices[0]?.message?.content || '';
-    const responseContent = typeof rawContent === 'string' ? rawContent : JSON.stringify(rawContent);
+    const responseContent = result.content[0].type === 'text' ? result.content[0].text : '';
     const jsonMatch = responseContent.match(/\[[\s\S]*\]/);
     if (jsonMatch) {
       const parsed: string[] = JSON.parse(jsonMatch[0]);
@@ -152,8 +149,8 @@ export async function analyzeContent(content: string, keyword: string, preMatchR
   // 默认预匹配结果
   const matchResult = preMatchResult ?? { matched: false, matchedTerms: [] };
 
-  if (!process.env.OPENROUTER_API_KEY) {
-    console.warn('OpenRouter API key not configured, using fallback analysis');
+  if (!process.env.MINIMAX_API_KEY) {
+    console.warn('Minimax API key not configured, using fallback analysis');
     return {
       isReal: true,
       relevance: matchResult.matched ? 50 : 20,
@@ -167,24 +164,20 @@ export async function analyzeContent(content: string, keyword: string, preMatchR
   try {
     const prompt = buildAnalysisPrompt(keyword, matchResult);
 
-    const result = await openRouter.chat.send({
-      model: 'deepseek/deepseek-v3.2',
+    const result = await anthropic.messages.create({
+      model: 'MiniMax-M2.5',
+      max_tokens: 500,
+      temperature: 0.2,
+      system: prompt,
       messages: [
-        {
-          role: 'system',
-          content: prompt
-        },
         {
           role: 'user',
           content: content.slice(0, 2000) // 限制内容长度
         }
-      ],
-      temperature: 0.2, // 降低温度，提高判断一致性
-      maxTokens: 500
+      ]
     });
 
-    const rawContent = result.choices[0]?.message?.content || '';
-    const responseContent = typeof rawContent === 'string' ? rawContent : JSON.stringify(rawContent);
+    const responseContent = result.content[0].type === 'text' ? result.content[0].text : '';
     
     // 尝试解析 JSON
     const jsonMatch = responseContent.match(/\{[\s\S]*\}/);

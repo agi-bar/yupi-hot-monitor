@@ -10,7 +10,7 @@
 
 ## 一、项目介绍
 
-这是一套以 **AI 编程实战** 为核心的项目教程，基于 Express 5 + React 19 + OpenRouter + Socket.io，用 AI 编程的方式从 0 到 1 开发一个《AI 热点监控工具》，带你亲身体验 AI Vibe Coding 的完整工作流，学会用 AI 快速做出实用的提效工具！
+这是一套以 **AI 编程实战** 为核心的项目教程，基于 Express 5 + React 19 + Minimax + Socket.io，用 AI 编程的方式从 0 到 1 开发一个《AI 热点监控工具》，带你亲身体验 AI Vibe Coding 的完整工作流，学会用 AI 快速做出实用的提效工具！
 
 📺 项目介绍视频，快速查看成品效果：https://bilibili.com/video/BV1g8d8B6ENk
 
@@ -84,7 +84,7 @@
 - 如何安装和使用 MCP 增强 AI 能力？
 - 如何安装和使用 Agent Skills 提升 AI 编程质量？
 - 如何从多个信息源（Twitter、Bing、HN、B 站等）聚合抓取内容？
-- 如何通过 OpenRouter 接入 AI 大模型，实现智能内容审核？
+- 如何通过 Minimax 接入 AI 大模型，实现智能内容审核？
 - 如何实现查询扩展（Query Expansion），提高信息检索的召回率？
 - 如何基于 Socket.io 实现 WebSocket 实时推送？
 - 如何使用 Aceternity UI 打造炫酷的科技感前端界面？
@@ -132,7 +132,7 @@
 ### 前置条件
 
 - Node.js ≥ 18（推荐 20 LTS）
-- 一个 [OpenRouter API Key](https://openrouter.ai/settings/keys)（必需，用于 AI 分析）
+- 一个 [Minimax API Key](https://platform.minimaxi.com/docs/guides/authentication)（必需，用于 AI 分析）
 
 ### 1. 克隆并安装依赖
 
@@ -157,10 +157,10 @@ npm install
 cp server/.env.example server/.env
 ```
 
-编辑 `server/.env`，至少填入 OpenRouter API Key：
+编辑 `server/.env`，至少填入 Minimax API Key：
 
 ```bash
-OPENROUTER_API_KEY=sk-or-v1-你的key
+MINIMAX_API_KEY=你的key
 # Twitter API Key（可选）
 TWITTER_API_KEY=你的key
 ```
