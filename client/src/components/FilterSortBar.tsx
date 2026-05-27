@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   ArrowUpDown, Filter, X, Clock, Flame, TrendingUp, Target,
@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import type { Keyword } from '../services/api';
-import { sourcesApi, type Source } from '../services/sources';
+import { useSourceOptions } from '../hooks/useSourcesConfig';
 
 export interface FilterState {
   source: string;
@@ -19,7 +19,7 @@ export interface FilterState {
   sortOrder: string;
 }
 
-export const defaultFilterState: FilterState = {
+const defaultFilterState: FilterState = {
   source: '',
   sourceRecordId: '',
   importance: '',
@@ -44,19 +44,6 @@ const SORT_OPTIONS = [
   { value: 'hot', label: '热度综合', icon: TrendingUp },
 ];
 
-const SOURCE_OPTIONS = [
-  { value: '', label: '全部来源' },
-  { value: 'twitter', label: 'Twitter' },
-  { value: 'bing', label: 'Bing' },
-  { value: 'google', label: 'Google' },
-  { value: 'sogou', label: '搜狗' },
-  { value: 'bilibili', label: 'Bilibili' },
-  { value: 'weibo', label: '微博热搜' },
-  { value: 'weixin', label: '微信公众号' },
-  { value: 'hackernews', label: 'HackerNews' },
-  { value: 'duckduckgo', label: 'DuckDuckGo' },
-];
-
 const IMPORTANCE_OPTIONS = [
   { value: '', label: '全部等级' },
   { value: 'urgent', label: '🔴 紧急', color: 'text-red-400' },
@@ -79,7 +66,6 @@ const REAL_OPTIONS = [
   { value: 'false', label: '⚠️ 疑似虚假' },
 ];
 
-// Dropdown component
 function Dropdown({ 
   label, 
   value, 
@@ -100,14 +86,14 @@ function Dropdown({
       <button
         onClick={() => setOpen(!open)}
         className={cn(
-          "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all whitespace-nowrap",
+          "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all whitespace-nowrap min-w-[100px]",
           isActive
             ? "bg-blue-500/15 text-blue-400 border border-blue-500/30"
             : "bg-white/5 text-slate-400 border border-white/10 hover:border-white/20 hover:text-slate-300"
         )}
       >
         <span>{isActive ? selected?.label : label}</span>
-        <ChevronDown className={cn("w-3 h-3 transition-transform", open && "rotate-180")} />
+        <ChevronDown className={cn("w-3 h-3 transition-transform shrink-0", open && "rotate-180")} />
       </button>
 
       <AnimatePresence>
@@ -119,7 +105,7 @@ function Dropdown({
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: 4, scale: 0.96 }}
               transition={{ duration: 0.15 }}
-              className="absolute left-0 top-full mt-1 z-50 min-w-[160px] bg-[#0d0d20]/98 backdrop-blur-xl rounded-xl border border-white/10 shadow-2xl overflow-hidden"
+              className="absolute left-0 top-full mt-1 z-50 min-w-[180px] bg-[#0d0d20]/98 backdrop-blur-xl rounded-xl border border-white/10 shadow-2xl overflow-hidden"
             >
               {options.map((option) => (
                 <button
@@ -144,49 +130,40 @@ function Dropdown({
   );
 }
 
-export default function FilterSortBar({ filters, onChange, keywords }: FilterSortBarProps) {
-  const [showFilters, setShowFilters] = useState(false);
-  const [sources, setSources] = useState<Source[]>([]);
+function FilterTag({ label, onRemove }: { label: string; onRemove: () => void }) {
+  return (
+    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-blue-500/10 text-blue-400 text-xs border border-blue-500/20">
+      {label}
+      <button onClick={onRemove} className="hover:text-blue-300">
+        <X className="w-3 h-3" />
+      </button>
+    </span>
+  );
+}
 
-  useEffect(() => {
-    const fetchSources = async () => {
-      try {
-        const data = await sourcesApi.getAll({ limit: 100 });
-        setSources(data.data);
-      } catch (error) {
-        console.error('Failed to fetch sources:', error);
-      }
-    };
-    fetchSources();
-  }, []);
+export default function FilterSortBar({ filters, onChange, keywords }: FilterSortBarProps) {
+  const [showFilters, setShowFilters] = useState(true);
+  const { options: dynamicSourceOptions } = useSourceOptions();
 
   const activeFilterCount = [
     filters.source,
-    filters.sourceRecordId,
     filters.importance,
     filters.keywordId,
     filters.timeRange,
     filters.isReal,
   ].filter(v => v !== '').length;
 
-  const hasNonDefaultSort = filters.sortBy !== 'createdAt';
-
   const update = (key: keyof FilterState, value: string) => {
     onChange({ ...filters, [key]: value });
   };
 
   const resetFilters = () => {
-    onChange({ ...defaultFilterState });
+    onChange({ ...defaultFilterState, sortBy: filters.sortBy, sortOrder: filters.sortOrder });
   };
 
   const keywordOptions = [
     { value: '', label: '全部关键词' },
     ...keywords.filter(k => k.isActive).map(k => ({ value: k.id, label: k.text })),
-  ];
-
-  const sourceRecordOptions = [
-    { value: '', label: '全部来源' },
-    ...sources.map(s => ({ value: s.id, label: s.name })),
   ];
 
   return (
@@ -203,62 +180,26 @@ export default function FilterSortBar({ filters, onChange, keywords }: FilterSor
                 key={opt.value}
                 onClick={() => update('sortBy', opt.value)}
                 className={cn(
-                  "flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all whitespace-nowrap",
+                  "flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs transition-all",
                   filters.sortBy === opt.value
-                    ? "bg-blue-500/15 text-blue-400 shadow-sm"
+                    ? "bg-blue-500/20 text-blue-400"
                     : "text-slate-500 hover:text-slate-300"
                 )}
               >
                 <Icon className="w-3 h-3" />
-                {opt.label}
+                <span>{opt.label}</span>
               </button>
             );
           })}
         </div>
-
-        {/* Filter Toggle */}
-        <button
-          onClick={() => setShowFilters(!showFilters)}
-          className={cn(
-            "flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium transition-all",
-            showFilters || activeFilterCount > 0
-              ? "bg-blue-500/15 text-blue-400 border border-blue-500/30"
-              : "bg-white/5 text-slate-400 border border-white/10 hover:border-white/20"
-          )}
-        >
-          <Filter className="w-3.5 h-3.5" />
-          筛选
-          {activeFilterCount > 0 && (
-            <span className="w-4 h-4 rounded-full bg-blue-500 text-[10px] text-white flex items-center justify-center font-bold">
-              {activeFilterCount}
-            </span>
-          )}
-        </button>
-
-        {/* Reset */}
-        {(activeFilterCount > 0 || hasNonDefaultSort) && (
-          <button
-            onClick={resetFilters}
-            className="flex items-center gap-1 px-2.5 py-2 rounded-xl text-xs text-slate-500 hover:text-slate-300 transition-colors"
-          >
-            <RotateCcw className="w-3 h-3" />
-            重置
-          </button>
-        )}
 
         {/* Active Filter Tags */}
         {activeFilterCount > 0 && !showFilters && (
           <div className="flex items-center gap-1.5 flex-wrap">
             {filters.source && (
               <FilterTag
-                label={SOURCE_OPTIONS.find(o => o.value === filters.source)?.label || filters.source}
+                label={dynamicSourceOptions.find(o => o.value === filters.source)?.label || filters.source}
                 onRemove={() => update('source', '')}
-              />
-            )}
-            {filters.sourceRecordId && (
-              <FilterTag
-                label={sources.find(s => s.id === filters.sourceRecordId)?.name || '来源'}
-                onRemove={() => update('sourceRecordId', '')}
               />
             )}
             {filters.importance && (
@@ -269,13 +210,13 @@ export default function FilterSortBar({ filters, onChange, keywords }: FilterSor
             )}
             {filters.keywordId && (
               <FilterTag
-                label={keywords.find(k => k.id === filters.keywordId)?.text || '关键词'}
+                label={keywordOptions.find(o => o.value === filters.keywordId)?.label || '关键词'}
                 onRemove={() => update('keywordId', '')}
               />
             )}
             {filters.timeRange && (
               <FilterTag
-                label={TIME_RANGE_OPTIONS.find(o => o.value === filters.timeRange)?.label || filters.timeRange}
+                label={TIME_RANGE_OPTIONS.find(o => o.value === filters.timeRange)?.label || '时间'}
                 onRemove={() => update('timeRange', '')}
               />
             )}
@@ -287,9 +228,38 @@ export default function FilterSortBar({ filters, onChange, keywords }: FilterSor
             )}
           </div>
         )}
+
+        {/* Filter Toggle */}
+        <button
+          onClick={() => setShowFilters(!showFilters)}
+          className={cn(
+            "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ml-auto",
+            showFilters || activeFilterCount > 0
+              ? "bg-blue-500/15 text-blue-400 border border-blue-500/30"
+              : "bg-white/5 text-slate-400 border border-white/10 hover:border-white/20 hover:text-slate-300"
+          )}
+        >
+          <Filter className="w-3.5 h-3.5" />
+          <span>筛选</span>
+          {activeFilterCount > 0 && (
+            <span className="px-1.5 py-0.5 rounded-full bg-blue-500/30 text-blue-300 text-xs">
+              {activeFilterCount}
+            </span>
+          )}
+        </button>
+
+        {/* Reset Button */}
+        {activeFilterCount > 0 && (
+          <button
+            onClick={resetFilters}
+            className="flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs text-slate-500 hover:text-slate-300 transition-all"
+          >
+            <RotateCcw className="w-3 h-3" />
+          </button>
+        )}
       </div>
 
-      {/* Expanded Filter Panel */}
+      {/* Expanded Filters */}
       <AnimatePresence>
         {showFilters && (
           <motion.div
@@ -299,8 +269,7 @@ export default function FilterSortBar({ filters, onChange, keywords }: FilterSor
             transition={{ duration: 0.2 }}
           >
             <div className="flex items-center gap-2 flex-wrap p-3 rounded-xl bg-white/[0.02] border border-white/5">
-              <Dropdown label="来源类型" value={filters.source} options={SOURCE_OPTIONS} onChange={(v) => update('source', v)} />
-              <Dropdown label="来源实例" value={filters.sourceRecordId} options={sourceRecordOptions} onChange={(v) => update('sourceRecordId', v)} />
+              <Dropdown label="来源类型" value={filters.source} options={dynamicSourceOptions} onChange={(v) => update('source', v)} />
               <Dropdown label="重要程度" value={filters.importance} options={IMPORTANCE_OPTIONS} onChange={(v) => update('importance', v)} />
               <Dropdown label="关键词" value={filters.keywordId} options={keywordOptions} onChange={(v) => update('keywordId', v)} />
               <Dropdown label="时间" value={filters.timeRange} options={TIME_RANGE_OPTIONS} onChange={(v) => update('timeRange', v)} />
@@ -310,16 +279,5 @@ export default function FilterSortBar({ filters, onChange, keywords }: FilterSor
         )}
       </AnimatePresence>
     </div>
-  );
-}
-
-function FilterTag({ label, onRemove }: { label: string; onRemove: () => void }) {
-  return (
-    <span className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-blue-500/10 text-blue-400 text-[10px] font-medium border border-blue-500/20">
-      {label}
-      <button onClick={onRemove} className="hover:text-white transition-colors">
-        <X className="w-2.5 h-2.5" />
-      </button>
-    </span>
   );
 }

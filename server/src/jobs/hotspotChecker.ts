@@ -90,12 +90,30 @@ async function deduplicateWithCache(
   return dedupedResults;
 }
 
+// 必须有明确时间的来源（API 或页面必定有日期）
+const TIME_REQUIRED_SOURCES = ['twitter', 'hackernews', 'bilibili', 'weixin'];
+
+// 时间可选的来源（热搜榜单无时间或页面时间不准确）
+const TIME_OPTIONAL_SOURCES = ['weibo', 'bing', 'google', 'sogou', 'duckduckgo'];
+
 function filterByFreshness(results: SearchResult[]): SearchResult[] {
   const cutoff = new Date(Date.now() - MAX_AGE_HOURS * 3600 * 1000);
+  
   return results.filter(item => {
-    // 没有发布时间的，暂时保留（搜索引擎结果通常没有时间）
-    if (!item.publishedAt) return true;
-    return item.publishedAt >= cutoff;
+    // 信任来源必须有明确时间且在有效期内
+    if (TIME_REQUIRED_SOURCES.includes(item.source)) {
+      if (!item.publishedAt) {
+        console.log(`  ⏭️  Skipped (${item.source} requires publishedAt): ${item.title.slice(0, 30)}...`);
+        return false;
+      }
+      if (item.publishedAt < cutoff) {
+        console.log(`  ⏭️  Skipped (expired): ${item.title.slice(0, 30)}...`);
+        return false;
+      }
+    }
+    // 其他来源（搜索引擎、微博热搜）：时间可选，即使没有也保留
+    // 理由：AI分析 + 相关性评分 + 来源优先级已足够控制质量
+    return true;
   });
 }
 
@@ -119,6 +137,8 @@ function prioritizeResults(results: SearchResult[]): SearchResult[] {
 
 // 实时软去重函数：清理同一标题+来源的重复记录
 // 保留最新插入的记录，删除其他的
+// 注意：这是系统自动去重，删除的旧记录不需要设置永久缓存
+// 因为新插入的记录会在 deduplicateWithCache 中自动设置24小时缓存
 async function cleanupRecentDuplicates(
   newestId: string,
   title: string,
@@ -136,6 +156,15 @@ async function cleanupRecentDuplicates(
     
     if (result.count > 0) {
       console.log(`  🧹 Soft deduplication: removed ${result.count} duplicate(s) for "${title.slice(0, 30)}..."`);
+      
+      // 清理去重缓存，让同一标题的数据可以在24小时后重新被抓取
+      // 注意：这不是用户主动删除，不需要设置永久缓存
+      try {
+        const cacheKey = `${DEDUP_CACHE_PREFIX}${source}:${title}`;
+        await redis.del(cacheKey);
+      } catch (cacheError) {
+        console.warn(`  ⚠️  Failed to clear dedup cache:`, cacheError);
+      }
       
       // 同时清理这些记录的通知
       // 注意：这里只清理了重复的热点，没清理通知（通知可能需要单独处理）

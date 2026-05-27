@@ -74,6 +74,13 @@ export interface Stats {
   bySource: Record<string, number>;
 }
 
+export interface PaginationMeta {
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
+}
+
 async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const authHeaders = getAuthHeaders();
   const response = await fetch(`${API_BASE}${endpoint}`, {
@@ -160,7 +167,13 @@ export const hotspotsApi = {
     }),
   
   delete: (id: string) => 
-    request<void>(`/hotspots/${id}`, { method: 'DELETE' })
+    request<void>(`/hotspots/${id}`, { method: 'DELETE' }),
+  
+  batchDelete: (ids: string[]) =>
+    request<{ message: string; count: number }>('/hotspots/batch-delete', {
+      method: 'POST',
+      body: JSON.stringify({ ids, confirm: true })
+    })
 };
 
 // Notifications API
@@ -172,7 +185,7 @@ export const notificationsApi = {
         if (value !== undefined) searchParams.append(key, String(value));
       });
     }
-    return request<{ data: Notification[]; unreadCount: number; pagination: any }>(
+    return request<{ data: Notification[]; unreadCount: number; pagination: PaginationMeta }>(
       `/notifications?${searchParams}`
     );
   },
@@ -187,7 +200,10 @@ export const notificationsApi = {
     request<void>(`/notifications/${id}`, { method: 'DELETE' }),
   
   clear: () => 
-    request<void>('/notifications', { method: 'DELETE' })
+    request<void>('/notifications', { 
+      method: 'DELETE',
+      body: JSON.stringify({ confirm: true })
+    })
 };
 
 // Settings API

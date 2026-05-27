@@ -1,6 +1,9 @@
 import { prisma } from '../db.js';
 import { logInfo, logError } from '../utils/logger.js';
+import { redisClient as redis } from '../utils/redis.js';
 import nodeCron from 'node-cron';
+
+const DEDUP_CACHE_PREFIX = 'hotspot:dedup:';
 
 interface CleanupResult {
   table: string;
@@ -126,6 +129,14 @@ class DuplicateCleanupJob {
           }
         });
         
+        // 清理去重缓存（系统自动去重，不需要永久过滤）
+        try {
+          const cacheKey = `${DEDUP_CACHE_PREFIX}${dup.source}:${dup.title}`;
+          await redis.del(cacheKey);
+        } catch (cacheError) {
+          logInfo('DuplicateCleanupJob', `Failed to clear cache for: ${dup.source}:${dup.title.slice(0, 30)}...`);
+        }
+        
         totalRemoved += removed.count;
         details.push({ 
           title: dup.title.substring(0, 50), 
@@ -152,12 +163,39 @@ class DuplicateCleanupJob {
     try {
       const cutoffDate = new Date(Date.now() - daysOld * 24 * 60 * 60 * 1000);
       
+      // 先查询要删除的记录的 source 和 title（限制数量，避免内存问题）
+      const hotspotsToDelete = await prisma.hotspot.findMany({
+        where: {
+          importance: { notIn: ['high', 'urgent'] },
+          createdAt: { lt: cutoffDate }
+        },
+        select: { source: true, title: true },
+        take: 1000 // 限制一次处理1000条
+      });
+      
+      // 删除数据库记录
       const result = await prisma.hotspot.deleteMany({
         where: {
           importance: { notIn: ['high', 'urgent'] },
           createdAt: { lt: cutoffDate }
         }
       });
+      
+      // ✅ 设置永久缓存（30天），确保清理的旧数据永远不会再被抓取
+      if (hotspotsToDelete.length > 0) {
+        try {
+          const pipeline = redis.pipeline();
+          for (const hotspot of hotspotsToDelete) {
+            const cacheKey = `${DEDUP_CACHE_PREFIX}${hotspot.source}:${hotspot.title}`;
+            pipeline.setEx(cacheKey, 30 * 24 * 60 * 60, 'deleted');
+          }
+          await pipeline.exec();
+          logInfo('DuplicateCleanupJob', 
+            `Set ${hotspotsToDelete.length} permanent dedup cache entries (30 days) for old hotspots`);
+        } catch (cacheError) {
+          logInfo('DuplicateCleanupJob', `Failed to set permanent cache for old hotspots`);
+        }
+      }
       
       logInfo('DuplicateCleanupJob', 
         `Cleaned up ${result.count} old hotspots (older than ${daysOld} days, excluding high/urgent)`);

@@ -23,6 +23,8 @@ import { relativeTime, formatDateTime } from './utils/relativeTime';
 import Pagination from './components/Pagination';
 import ThemeToggle from './components/ThemeToggle';
 import SourcesManager from './components/SourcesManager';
+import ConfirmDialog from './components/ConfirmDialog';
+import NotificationPanel from './components/NotificationPanel';
 import { useTheme } from './contexts/ThemeContext';
 // TextGenerateEffect available for future use
 
@@ -59,7 +61,7 @@ function App() {
   
   const [newKeyword, setNewKeyword] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
   const [isChecking, setIsChecking] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
   const [activeTab, setActiveTab] = useState<'dashboard' | 'keywords' | 'search' | 'sources'>('dashboard');
@@ -75,6 +77,23 @@ function App() {
   const [expandedReasons, setExpandedReasons] = useState<Set<string>>(new Set());
   const [expandedContents, setExpandedContents] = useState<Set<string>>(new Set());
   const [allReasonsExpanded, setAllReasonsExpanded] = useState(false);
+  // 热点选择状态
+  const [selectedHotspots, setSelectedHotspots] = useState<Set<string>>(new Set());
+
+  // 确认对话框状态
+  const [confirmDialog, setConfirmDialog] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    isLoading?: boolean;
+    onConfirm: () => void;
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    isLoading: false,
+    onConfirm: () => {}
+  });
 
   // 加载数据
   const loadData = useCallback(async () => {
@@ -107,6 +126,8 @@ function App() {
       setStats(statsData);
       setNotifications(notifData.data);
       setUnreadCount(notifData.unreadCount);
+      setNotificationPage(1);
+      setHasMoreNotifications(notifData.pagination.page < notifData.pagination.totalPages);
 
       // 订阅关键词
       const activeKeywords = keywordsData.filter(k => k.isActive).map(k => k.text);
@@ -205,36 +226,153 @@ function App() {
     e.preventDefault();
     if (!newKeyword.trim()) return;
 
+    const keywordText = newKeyword.trim();
     try {
-      const keyword = await keywordsApi.create({ text: newKeyword.trim() });
+      const keyword = await keywordsApi.create({ text: keywordText });
       setKeywords(prev => [keyword, ...prev]);
       setNewKeyword('');
       showToast('关键词添加成功', 'success');
       subscribeToKeywords([keyword.text]);
     } catch (error: unknown) {
+      setNewKeyword(keywordText);  // 恢复输入框内容
       const message = error instanceof Error ? error.message : '添加失败';
+      console.error('Failed to add keyword:', error);
       showToast(message, 'error');
     }
   };
 
   // 删除关键词
   const handleDeleteKeyword = async (id: string) => {
-    try {
-      await keywordsApi.delete(id);
-      setKeywords(prev => prev.filter(k => k.id !== id));
-      showToast('关键词已删除', 'success');
-    } catch {
-      showToast('删除失败', 'error');
-    }
+    setConfirmDialog({
+      isOpen: true,
+      title: '删除关键词',
+      message: '确定要删除这个监控关键词吗？删除后相关热点将不再追踪。',
+      onConfirm: async () => {
+        setConfirmDialog(prev => ({ ...prev, isLoading: true }));
+        const previousKeywords = keywords;
+        try {
+          await keywordsApi.delete(id);
+          setKeywords(prev => prev.filter(k => k.id !== id));
+          setConfirmDialog(prev => ({ ...prev, isOpen: false, isLoading: false }));
+          showToast('关键词已删除', 'success');
+        } catch (error) {
+          setKeywords(previousKeywords);
+          setConfirmDialog(prev => ({ ...prev, isLoading: false }));
+          console.error('删除关键词失败:', error);
+          showToast('删除失败', 'error');
+        }
+      }
+    });
   };
 
   // 切换关键词状态
   const handleToggleKeyword = async (id: string) => {
+    const previousKeywords = keywords;
     try {
       const updated = await keywordsApi.toggle(id);
       setKeywords(prev => prev.map(k => k.id === id ? updated : k));
-    } catch {
+    } catch (error) {
+      setKeywords(previousKeywords);
+      console.error('Failed to toggle keyword:', error);
       showToast('操作失败', 'error');
+    }
+  };
+
+  // 删除热点数据
+  const handleDeleteHotspot = async (id: string) => {
+    setConfirmDialog({
+      isOpen: true,
+      title: '删除热点',
+      message: '确定要删除这条热点数据吗？此操作无法撤销。',
+      onConfirm: async () => {
+        setConfirmDialog(prev => ({ ...prev, isLoading: true }));
+        
+        const currentHotspots = hotspots;
+        const pageToUse = currentPage;
+        const totalPagesCount = totalPages;
+        
+        // 如果是最后一页且只有一条数据，删除后需要回到上一页
+        const shouldGoToPrevPage = pageToUse === totalPagesCount && 
+                                    currentHotspots.length === 1 && 
+                                    pageToUse > 1;
+        
+        try {
+          // 先调用 API 删除
+          const deletePromise = hotspotsApi.delete(id);
+          
+          // 更新 URL（如果需要）
+          if (shouldGoToPrevPage) {
+            const newPage = pageToUse - 1;
+            const url = new URL(window.location.href);
+            url.searchParams.set('page', newPage.toString());
+            window.history.replaceState({}, '', url.toString());
+            setCurrentPage(newPage);
+          }
+          
+          // 等待删除完成
+          await deletePromise;
+          
+          // 删除成功后重新加载数据
+          await loadData();
+          
+          setConfirmDialog(prev => ({ ...prev, isOpen: false, isLoading: false }));
+          showToast('热点已删除', 'success');
+        } catch (error) {
+          setConfirmDialog(prev => ({ ...prev, isLoading: false }));
+          console.error('删除热点失败:', error);
+          showToast('删除失败', 'error');
+        }
+      }
+    });
+  };
+
+  // 批量删除热点
+  const handleBatchDeleteHotspots = async () => {
+    if (selectedHotspots.size === 0) return;
+    
+    const selectedIds = Array.from(selectedHotspots);
+    const count = selectedIds.length;
+    
+    setConfirmDialog({
+      isOpen: true,
+      title: '批量删除热点',
+      message: `确定要删除选中的 ${count} 条热点数据吗？此操作无法撤销。`,
+      onConfirm: async () => {
+        setConfirmDialog(prev => ({ ...prev, isLoading: true }));
+        try {
+          await hotspotsApi.batchDelete(selectedIds);
+          setSelectedHotspots(new Set());
+          await loadData();
+          setConfirmDialog(prev => ({ ...prev, isOpen: false, isLoading: false }));
+          showToast(`${count} 条热点已删除`, 'success');
+        } catch (error) {
+          setConfirmDialog(prev => ({ ...prev, isLoading: false }));
+          console.error('批量删除热点失败:', error);
+          showToast('批量删除失败', 'error');
+        }
+      }
+    });
+  };
+
+  // 切换热点选择
+  const toggleHotspotSelection = (id: string) => {
+    setSelectedHotspots(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(id)) {
+        newSet.delete(id);
+      } else {
+        newSet.add(id);
+      }
+      return newSet;
+    });
+  };
+
+  // 全选/取消全选热点
+  const toggleSelectAllHotspots = () => {
+    if (selectedHotspots.size === hotspots.length) {
+      setSelectedHotspots(new Set());
+    } else {
+      setSelectedHotspots(new Set(hotspots.map(h => h.id)));
     }
   };
 
@@ -269,14 +407,115 @@ function App() {
     }
   };
 
-  // 标记通知为已读
+  // 标记单条通知为已读
+  const handleMarkAsRead = async (id: string) => {
+    const previousNotifications = notifications;
+    const previousUnreadCount = unreadCount;
+    try {
+      await notificationsApi.markAsRead(id);
+      setUnreadCount(prev => Math.max(0, prev - 1));
+      setNotifications(prev => prev.map(n => n.id === id ? { ...n, isRead: true } : n));
+    } catch (error) {
+      setUnreadCount(previousUnreadCount);
+      setNotifications(previousNotifications);
+      console.error('Failed to mark notification as read:', error);
+    }
+  };
+
+  // 标记所有通知为已读
   const handleMarkAllRead = async () => {
+    const previousUnreadCount = unreadCount;
+    const previousNotifications = notifications;
     try {
       await notificationsApi.markAllAsRead();
       setUnreadCount(0);
       setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
     } catch (error) {
-      console.error('Failed to mark as read:', error);
+      setUnreadCount(previousUnreadCount);
+      setNotifications(previousNotifications);
+      console.error('Failed to mark all as read:', error);
+    }
+  };
+
+  // 删除单条通知
+  const handleDeleteNotification = async (id: string) => {
+    setConfirmDialog({
+      isOpen: true,
+      title: '删除通知',
+      message: '确定要删除这条通知吗？',
+      onConfirm: async () => {
+        setConfirmDialog(prev => ({ ...prev, isLoading: true }));
+        const previousNotifications = notifications;
+        const notification = notifications.find(n => n.id === id);
+        try {
+          await notificationsApi.delete(id);
+          setNotifications(prev => prev.filter(n => n.id !== id));
+          if (notification && !notification.isRead) {
+            setUnreadCount(prev => Math.max(0, prev - 1));
+          }
+          setConfirmDialog(prev => ({ ...prev, isOpen: false, isLoading: false }));
+        } catch (error) {
+          setNotifications(previousNotifications);
+          setConfirmDialog(prev => ({ ...prev, isLoading: false }));
+          console.error('删除通知失败:', error);
+        }
+      }
+    });
+  };
+
+  // 清空所有通知
+  const handleClearAllNotifications = async () => {
+    setConfirmDialog({
+      isOpen: true,
+      title: '清空通知',
+      message: '确定要清空所有通知吗？此操作无法撤销。',
+      onConfirm: async () => {
+        setConfirmDialog(prev => ({ ...prev, isLoading: true }));
+        const previousNotifications = notifications;
+        const previousUnreadCount = unreadCount;
+        try {
+          await notificationsApi.clear();
+          setNotifications([]);
+          setUnreadCount(0);
+          setShowNotifications(false);
+          setConfirmDialog(prev => ({ ...prev, isOpen: false, isLoading: false }));
+        } catch (error) {
+          setNotifications(previousNotifications);
+          setUnreadCount(previousUnreadCount);
+          setConfirmDialog(prev => ({ ...prev, isLoading: false }));
+          console.error('清空通知失败:', error);
+        }
+      }
+    });
+  };
+
+  // 加载更多通知
+  const [notificationPage, setNotificationPage] = useState(1);
+  const [hasMoreNotifications, setHasMoreNotifications] = useState(false);
+  const loadMoreNotifications = async () => {
+    try {
+      const newPage = notificationPage + 1;
+      const data = await notificationsApi.getAll({ page: newPage, limit: 20 });
+      setNotifications(prev => [...prev, ...data.data]);
+      setNotificationPage(newPage);
+      setHasMoreNotifications(data.pagination.page < data.pagination.totalPages);
+    } catch (error) {
+      console.error('Failed to load more notifications:', error);
+    }
+  };
+
+  // 跳转到热点详情
+  const navigateToHotspot = (hotspotId: string) => {
+    setShowNotifications(false);
+    // 查找热点并滚动到对应位置
+    const hotspot = hotspots.find(h => h.id === hotspotId);
+    if (hotspot) {
+      const element = document.getElementById(`hotspot-${hotspotId}`);
+      if (element) {
+        element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        element.classList.add('ring-2', 'ring-blue-500');
+        setTimeout(() => element.classList.remove('ring-2', 'ring-blue-500'), 2000);
+      }
     }
   };
 
@@ -404,6 +643,18 @@ function App() {
       <div className="fixed top-0 right-0 w-[600px] h-[600px] bg-blue-500/5 rounded-full blur-3xl pointer-events-none" />
       <div className="fixed bottom-0 left-0 w-[400px] h-[400px] bg-cyan-500/5 rounded-full blur-3xl pointer-events-none" />
 
+      {/* Confirm Dialog */}
+      <ConfirmDialog
+        isOpen={confirmDialog.isOpen}
+        title={confirmDialog.title}
+        message={confirmDialog.message}
+        isLoading={confirmDialog.isLoading}
+        onConfirm={() => {
+          confirmDialog.onConfirm();
+        }}
+        onCancel={() => setConfirmDialog(prev => ({ ...prev, isOpen: false, isLoading: false }))}
+      />
+
       {/* Toast */}
       <AnimatePresence>
         {toast && (
@@ -479,35 +730,17 @@ function App() {
 
                 <AnimatePresence>
                   {showNotifications && (
-                    <motion.div
-                      initial={{ opacity: 0, y: 8, scale: 0.96 }}
-                      animate={{ opacity: 1, y: 0, scale: 1 }}
-                      exit={{ opacity: 0, y: 8, scale: 0.96 }}
-                      className="absolute right-0 top-14 w-80 bg-[#0a0a1a]/95 backdrop-blur-2xl rounded-2xl border border-white/10 shadow-2xl overflow-hidden"
-                    >
-                      <div className="flex items-center justify-between p-4 border-b border-white/5">
-                        <h3 className="font-medium text-white">通知</h3>
-                        {unreadCount > 0 && (
-                          <button onClick={handleMarkAllRead} className="text-xs text-blue-400 hover:text-blue-300">
-                            全部已读
-                          </button>
-                        )}
-                      </div>
-                      <div className="max-h-80 overflow-y-auto">
-                        {notifications.length === 0 ? (
-                          <p className="text-slate-500 text-sm text-center py-8">暂无通知</p>
-                        ) : (
-                          <div className="divide-y divide-white/5">
-                            {notifications.slice(0, 5).map(n => (
-                              <div key={n.id} className={cn("p-4 transition-colors", n.isRead ? 'opacity-50' : 'hover:bg-white/5')}>
-                                <p className="text-sm font-medium text-white">{n.title}</p>
-                                <p className="text-xs text-slate-500 mt-1 line-clamp-2">{n.content}</p>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    </motion.div>
+                    <NotificationPanel
+                      notifications={notifications}
+                      unreadCount={unreadCount}
+                      onMarkAsRead={handleMarkAsRead}
+                      onDelete={handleDeleteNotification}
+                      onMarkAllRead={handleMarkAllRead}
+                      onClearAll={handleClearAllNotifications}
+                      onNavigate={navigateToHotspot}
+                      onLoadMore={loadMoreNotifications}
+                      hasMore={hasMoreNotifications}
+                    />
                   )}
                 </AnimatePresence>
               </div>
@@ -646,9 +879,36 @@ function App() {
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {/* 一键展开/折叠所有理由 */}
-                  {hotspots.some(h => h.relevanceReason) && (
-                    <div className="flex justify-end">
+                  {/* 批量操作栏 */}
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={selectedHotspots.size === hotspots.length && hotspots.length > 0}
+                          onChange={toggleSelectAllHotspots}
+                          className="w-4 h-4 rounded border-white/20 bg-white/5 text-blue-500 focus:ring-blue-500/50 cursor-pointer"
+                        />
+                        <span className="text-sm">
+                          {selectedHotspots.size > 0 ? (
+                            <span className="text-blue-400">已选择 {selectedHotspots.size} 项</span>
+                          ) : (
+                            <span className="text-slate-400">全选</span>
+                          )}
+                        </span>
+                      </label>
+                      {selectedHotspots.size > 0 && (
+                        <button
+                          onClick={handleBatchDeleteHotspots}
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-500/20 hover:bg-red-500/30 border border-red-500/30 text-red-400 text-sm font-medium transition-all"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                          批量删除
+                        </button>
+                      )}
+                    </div>
+                    {/* 一键展开/折叠所有理由 */}
+                    {hotspots.some(h => h.relevanceReason) && (
                       <button
                         onClick={() => toggleAllReasons(hotspots)}
                         className="flex items-center gap-1.5 text-xs text-slate-500 hover:text-blue-400 transition-colors px-3 py-1.5 rounded-lg hover:bg-white/5"
@@ -656,21 +916,38 @@ function App() {
                         <ChevronsUpDown className="w-3.5 h-3.5" />
                         {allReasonsExpanded ? '折叠所有理由' : '展开所有理由'}
                       </button>
-                    </div>
-                  )}
+                    )}
+                  </div>
 
                   {hotspots.map((hotspot, index) => {
                     const heatScore = calcHeatScore(hotspot);
                     const heat = getHeatLevel(heatScore);
+                    const isSelected = selectedHotspots.has(hotspot.id);
                     return (
                     <motion.div
+                      id={`hotspot-${hotspot.id}`}
                       key={hotspot.id}
                       initial={{ opacity: 0, x: -10 }}
                       animate={{ opacity: 1, x: 0 }}
                       transition={{ delay: index * 0.03 }}
-                      className="group p-5 rounded-2xl bg-white/[0.02] hover:bg-white/[0.04] border border-white/5 hover:border-white/10 transition-all"
+                      className={cn(
+                        "group p-5 rounded-2xl border transition-all",
+                        isSelected 
+                          ? "bg-blue-500/5 border-blue-500/30 hover:bg-blue-500/10" 
+                          : "bg-white/[0.02] hover:bg-white/[0.04] border-white/5 hover:border-white/10"
+                      )}
                     >
                       <div className="flex items-start justify-between gap-4">
+                        {/* 选择框 */}
+                        <div className="flex-shrink-0 pt-1">
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => toggleHotspotSelection(hotspot.id)}
+                            className="w-4 h-4 rounded border-white/20 bg-white/5 text-blue-500 focus:ring-blue-500/50 cursor-pointer"
+                          />
+                        </div>
+                        
                         <div className="flex-1 min-w-0">
                           {/* Row 1: Meta badges */}
                           <div className="flex flex-wrap items-center gap-2 mb-3">
@@ -879,16 +1156,28 @@ function App() {
                           )}
                         </div>
                         
-                        {/* Link */}
-                        <a
-                          href={hotspot.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          onClick={(e) => e.stopPropagation()}
-                          className="p-2.5 rounded-xl bg-white/5 hover:bg-blue-500/20 text-slate-500 hover:text-blue-400 transition-all opacity-0 group-hover:opacity-100"
-                        >
-                          <ExternalLink className="w-4 h-4" />
-                        </a>
+                        {/* Actions */}
+                        <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                          <a
+                            href={hotspot.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                            className="p-2.5 rounded-xl bg-white/5 hover:bg-blue-500/20 text-slate-500 hover:text-blue-400 transition-all"
+                          >
+                            <ExternalLink className="w-4 h-4" />
+                          </a>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDeleteHotspot(hotspot.id);
+                            }}
+                            className="p-2.5 rounded-xl bg-white/5 hover:bg-red-500/20 text-slate-500 hover:text-red-400 transition-all"
+                            title="删除"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
                       </div>
                     </motion.div>
                     );
@@ -1050,6 +1339,15 @@ function App() {
 
             {/* Search Results */}
             <div className="space-y-3">
+              {searchResults.length === 0 && !isLoading && (
+                <div className="text-center py-16 rounded-2xl border border-dashed border-white/10">
+                  <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-white/5 flex items-center justify-center">
+                    <Search className="w-8 h-8 text-slate-600" />
+                  </div>
+                  <p className="text-slate-500">输入关键词搜索热点</p>
+                  <p className="text-sm text-slate-600 mt-1">输入要搜索的内容获取相关热点</p>
+                </div>
+              )}
               {filteredSearchResults.length === 0 && searchResults.length > 0 && (
                 <div className="text-center py-12 rounded-2xl border border-dashed border-white/10">
                   <p className="text-slate-500">当前筛选条件下无结果</p>
@@ -1061,6 +1359,7 @@ function App() {
                 const heat = getHeatLevel(heatScore);
                 return (
                 <motion.div 
+                  id={`hotspot-${hotspot.id}`}
                   key={hotspot.id} 
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
@@ -1143,14 +1442,23 @@ function App() {
                         )}
                       </div>
                     </div>
-                    <a
-                      href={hotspot.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="shrink-0 px-4 py-2 rounded-xl bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 text-sm font-medium transition-all"
-                    >
-                      查看
-                    </a>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <a
+                        href={hotspot.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="px-4 py-2 rounded-xl bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 text-sm font-medium transition-all"
+                      >
+                        查看
+                      </a>
+                      <button
+                        onClick={() => handleDeleteHotspot(hotspot.id)}
+                        className="p-2 rounded-xl bg-red-500/10 hover:bg-red-500/20 text-red-400 text-sm font-medium transition-all"
+                        title="删除"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
                   </div>
                 </motion.div>
                 );

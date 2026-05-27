@@ -8,10 +8,11 @@ import {
 import { cn } from '../lib/utils';
 import { sourcesApi } from '../services/sources';
 import { useSourcesFilters } from '../hooks';
+import { useSourceOptions } from '../hooks/useSourcesConfig';
+import ConfirmDialog from './ConfirmDialog';
 import {
   type Source,
   type SourceStats,
-  SOURCE_TYPE_OPTIONS,
   SOURCE_STATUS_OPTIONS
 } from '@hot-monitor/types';
 
@@ -24,12 +25,25 @@ interface SourcesManagerProps {
 export default function SourcesManager({ onSourceSelect }: SourcesManagerProps) {
   const [sources, setSources] = useState<Source[]>([]);
   const [stats, setStats] = useState<SourceStats | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
   const [totalPages, setTotalPages] = useState(1);
   const [showModal, setShowModal] = useState(false);
   const [editingSource, setEditingSource] = useState<Source | null>(null);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [isExporting, setIsExporting] = useState(false);
+  const [confirmDialog, setConfirmDialog] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    isLoading?: boolean;
+    onConfirm: () => void;
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    isLoading: false,
+    onConfirm: () => {}
+  });
 
   const {
     filters,
@@ -39,9 +53,15 @@ export default function SourcesManager({ onSourceSelect }: SourcesManagerProps) 
     resetFilters,
     setSearch,
     goToNextPage,
-    goToPrevPage,
-    setPage
+    goToPrevPage
   } = useSourcesFilters();
+  
+  const { options: sourceTypeOptions } = useSourceOptions();
+
+  const showToast = useCallback((message: string, type: 'success' | 'error') => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 3000);
+  }, []);
 
   const loadSources = useCallback(async () => {
     setIsLoading(true);
@@ -63,16 +83,11 @@ export default function SourcesManager({ onSourceSelect }: SourcesManagerProps) 
     } finally {
       setIsLoading(false);
     }
-  }, [page, debouncedFilters.type, debouncedFilters.category, debouncedFilters.status, debouncedFilters.search]);
+  }, [page, debouncedFilters.type, debouncedFilters.category, debouncedFilters.status, debouncedFilters.search, showToast]);
 
   useEffect(() => {
     loadSources();
   }, [loadSources]);
-
-  const showToast = useCallback((message: string, type: 'success' | 'error') => {
-    setToast({ message, type });
-    setTimeout(() => setToast(null), 3000);
-  }, []);
 
   const handleCreate = useCallback(() => {
     setEditingSource(null);
@@ -85,15 +100,28 @@ export default function SourcesManager({ onSourceSelect }: SourcesManagerProps) 
   }, []);
 
   const handleDelete = useCallback(async (id: string) => {
-    if (!confirm('确定要删除这个来源吗？')) return;
-
-    try {
-      await sourcesApi.delete(id);
-      showToast('来源已删除', 'success');
-      loadSources();
-    } catch {
-      showToast('删除失败', 'error');
-    }
+    setConfirmDialog({
+      isOpen: true,
+      title: '删除来源',
+      message: '确定要删除这个来源吗？此操作无法撤销。',
+      onConfirm: async () => {
+        setConfirmDialog(prev => ({ ...prev, isLoading: true }));
+        try {
+          // 调用 API 删除
+          await sourcesApi.delete(id);
+          
+          // 重新加载数据
+          await loadSources();
+          
+          setConfirmDialog(prev => ({ ...prev, isOpen: false, isLoading: false }));
+          showToast('来源已删除', 'success');
+        } catch (error) {
+          setConfirmDialog(prev => ({ ...prev, isLoading: false }));
+          console.error('删除来源失败:', error);
+          showToast('删除失败', 'error');
+        }
+      }
+    });
   }, [loadSources, showToast]);
 
   const handleExport = useCallback(async () => {
@@ -135,6 +163,18 @@ export default function SourcesManager({ onSourceSelect }: SourcesManagerProps) 
 
   return (
     <div className="space-y-6">
+      {/* Confirm Dialog */}
+      <ConfirmDialog
+        isOpen={confirmDialog.isOpen}
+        title={confirmDialog.title}
+        message={confirmDialog.message}
+        isLoading={confirmDialog.isLoading}
+        onConfirm={() => {
+          confirmDialog.onConfirm();
+        }}
+        onCancel={() => setConfirmDialog(prev => ({ ...prev, isOpen: false, isLoading: false }))}
+      />
+
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-2xl font-bold text-white flex items-center gap-2">
@@ -202,8 +242,8 @@ export default function SourcesManager({ onSourceSelect }: SourcesManagerProps) 
             className="px-4 py-2 rounded-lg bg-white/5 border border-white/10 text-white focus:outline-none focus:border-blue-500/50"
           >
             <option value="">全部类型</option>
-            {SOURCE_TYPE_OPTIONS.map(type => (
-              <option key={type} value={type}>{type}</option>
+            {sourceTypeOptions.filter(o => o.value !== '').map(type => (
+              <option key={type.value} value={type.value}>{type.label}</option>
             ))}
           </select>
           <select
@@ -466,8 +506,8 @@ function SourceModal({ source, onClose, onSave }: SourceModalProps) {
                 onChange={(e) => setFormData({ ...formData, type: e.target.value })}
                 className="w-full px-4 py-2 rounded-lg bg-white/5 border border-white/10 text-white focus:outline-none focus:border-blue-500/50"
               >
-                {SOURCE_TYPE_OPTIONS.map(type => (
-                  <option key={type} value={type}>{type}</option>
+                {sourceTypeOptions.filter(o => o.value !== '').map(type => (
+                  <option key={type.value} value={type.value}>{type.label}</option>
                 ))}
               </select>
             </div>

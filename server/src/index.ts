@@ -12,6 +12,7 @@ import settingsRouter from './routes/settings.js';
 import notificationsRouter from './routes/notifications.js';
 import sourcesRouter from './routes/sources.js';
 import datasourcesRouter from './routes/datasources.js';
+import sourcesConfigRouter from './routes/sourcesConfig.js';
 import { runHotspotCheck } from './jobs/hotspotChecker.js';
 import { duplicateCleanupJob } from './jobs/duplicateCleanup.js';
 import { dataSourceManager } from './datasources/DataSourceManager.js';
@@ -34,10 +35,7 @@ const io = new Server(httpServer, {
   cors: corsOptions,
   transports: ['websocket', 'polling'],
   pingTimeout: 60000,
-  pingInterval: 25000,
-  reconnection: true,
-  reconnectionDelay: 1000,
-  reconnectionDelayMax: 5000
+  pingInterval: 25000
 });
 
 // Middleware
@@ -54,6 +52,7 @@ app.use('/api/keywords', keywordsRouter);
 app.use('/api/hotspots', hotspotsRouter);
 app.use('/api/settings', settingsRouter);
 app.use('/api/notifications', notificationsRouter);
+app.use('/api', sourcesConfigRouter);
 app.use('/api/sources', sourcesRouter);
 app.use('/api/datasources', datasourcesRouter);
 

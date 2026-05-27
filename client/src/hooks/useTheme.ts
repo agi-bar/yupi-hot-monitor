@@ -26,7 +26,6 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     root.setAttribute('data-theme', theme);
     localStorage.setItem('theme', theme);
     
-    // Apply theme-specific classes
     if (theme === 'light') {
       root.classList.add('light');
       root.classList.remove('dark');

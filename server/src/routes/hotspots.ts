@@ -1,8 +1,12 @@
 import { Router } from 'express';
 import { prisma } from '../db.js';
 import { sortHotspots } from '../utils/sortHotspots.js';
+import { redisClient as redis } from '../utils/redis.js';
+import { logInfo, logError } from '../utils/logger.js';
 
 const router = Router();
+
+const DEDUP_CACHE_PREFIX = 'hotspot:dedup:';
 
 // 获取所有热点
 router.get('/', async (req, res) => {
@@ -286,9 +290,35 @@ router.post('/search', async (req, res) => {
 // 删除热点
 router.delete('/:id', async (req, res) => {
   try {
+    // 先查询获取 source 和 title
+    const hotspot = await prisma.hotspot.findUnique({
+      where: { id: req.params.id },
+      select: { source: true, title: true }
+    });
+
+    if (!hotspot) {
+      return res.status(404).json({ error: 'Hotspot not found' });
+    }
+
+    // 删除数据库记录
     await prisma.hotspot.delete({
       where: { id: req.params.id }
     });
+
+    // ✅ 保留去重缓存（不清理），确保删除的数据永远不会再被抓取
+    // 缓存会在24小时后自然过期，但用户期望是永久过滤
+    // 为此我们使用一个更长的过期时间：30天
+    try {
+      const cacheKey = `${DEDUP_CACHE_PREFIX}${hotspot.source}:${hotspot.title}`;
+      const existingTTL = await redis.ttl(cacheKey);
+      // 如果缓存不存在或剩余时间少于30天，则设置为30天
+      if (existingTTL < 0 || existingTTL < 30 * 24 * 60 * 60) {
+        await redis.setEx(cacheKey, 30 * 24 * 60 * 60, 'deleted');
+        console.log(`[Hotspots API] Set permanent dedup cache (30 days) for: ${hotspot.source}:${hotspot.title.slice(0, 30)}...`);
+      }
+    } catch (cacheError) {
+      console.warn('[Hotspots API] Failed to set dedup cache:', cacheError);
+    }
 
     res.status(204).send();
   } catch (error: any) {
@@ -297,6 +327,55 @@ router.delete('/:id', async (req, res) => {
     }
     console.error('Error deleting hotspot:', error);
     res.status(500).json({ error: 'Failed to delete hotspot' });
+  }
+});
+
+// 批量删除热点
+router.post('/batch-delete', async (req, res) => {
+  try {
+    const { ids, confirm } = req.body;
+
+    if (!ids || !Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: 'IDs array is required' });
+    }
+
+    if (confirm !== true) {
+      return res.status(400).json({ 
+        error: 'Confirmation required',
+        message: 'Please provide confirm: true to proceed with deletion'
+      });
+    }
+
+    // 先查询所有要删除的记录
+    const hotspotsToDelete = await prisma.hotspot.findMany({
+      where: { id: { in: ids } },
+      select: { source: true, title: true }
+    });
+
+    // 删除数据库记录
+    const result = await prisma.hotspot.deleteMany({
+      where: { id: { in: ids } }
+    });
+
+    // ✅ 批量设置去重缓存（30天），确保删除的数据永远不会再被抓取
+    try {
+      const pipeline = redis.pipeline();
+      for (const hotspot of hotspotsToDelete) {
+        const cacheKey = `${DEDUP_CACHE_PREFIX}${hotspot.source}:${hotspot.title}`;
+        pipeline.setEx(cacheKey, 30 * 24 * 60 * 60, 'deleted');
+      }
+      await pipeline.exec();
+      console.log(`[Hotspots API] Set ${hotspotsToDelete.length} permanent dedup cache entries (30 days)`);
+    } catch (cacheError) {
+      console.warn('[Hotspots API] Failed to set dedup cache:', cacheError);
+    }
+
+    logInfo('hotspots.batchDelete', `Batch deleted ${result.count} hotspots and set permanent cache`);
+
+    res.json({ message: 'Hotspots deleted successfully', count: result.count });
+  } catch (error) {
+    logError('hotspots.batchDelete', error);
+    res.status(500).json({ error: 'Failed to batch delete hotspots' });
   }
 });
 

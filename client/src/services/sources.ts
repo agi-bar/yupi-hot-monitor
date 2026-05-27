@@ -8,7 +8,7 @@ export interface Source {
   status: 'active' | 'paused' | 'error';
   priority: number;
   description: string | null;
-  config: any | null;
+  config: Record<string, unknown> | null;
   credentials: string | null;
   totalRequests: number;
   successCount: number;
@@ -41,7 +41,7 @@ export interface SourceReport {
     byImportance: Record<string, number>;
   }>;
   importanceDistribution: Record<string, number>;
-  topHotspots: any[];
+  topHotspots: unknown[];
 }
 
 async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
@@ -104,7 +104,7 @@ export const sourcesApi = {
     type: string;
     category?: string;
     description?: string;
-    config?: any;
+    config?: Record<string, unknown>;
     priority?: number;
     isPublic?: boolean;
     allowedRoles?: string[];

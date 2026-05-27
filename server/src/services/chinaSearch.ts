@@ -459,6 +459,62 @@ export async function detectAndFetchAccount(keyword: string): Promise<{
 }
 
 // ============================================================
+// 微信内容可用性检查
+// ============================================================
+const WECHAT_BLOCKED_PATTERNS = [
+  '此内容因违规无法查看',
+  '该内容已被发布者删除',
+  '此内容因存在争议',
+  '此内容已被删除',
+  '相关内容因违反相关规定',
+  '此账号已注销',
+  '此内容无法查看'
+];
+
+async function checkWeixinContentAvailability(url: string): Promise<{
+  available: boolean;
+  reason?: string;
+}> {
+  try {
+    const response = await axios.get(url, {
+      headers: {
+        'User-Agent': getRandomUserAgent(),
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8'
+      },
+      timeout: 10000,
+      maxRedirects: 5
+    });
+
+    if (response.status !== 200) {
+      return { available: false, reason: 'HTTP status not 200' };
+    }
+
+    const content = typeof response.data === 'string' ? response.data : JSON.stringify(response.data);
+    const $ = cheerio.load(content);
+    const pageText = $('body').text();
+
+    for (const pattern of WECHAT_BLOCKED_PATTERNS) {
+      if (pageText.includes(pattern)) {
+        console.log(`Weixin content blocked: ${pattern} - ${url}`);
+        return { available: false, reason: pattern };
+      }
+    }
+
+    const titleElement = $('h1#activity-name, h1.rich_media_title');
+    if (titleElement.text().includes('此内容因违规')) {
+      return { available: false, reason: 'Title contains blocked text' };
+    }
+
+    return { available: true };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    console.log(`Weixin content check failed for ${url}: ${errorMessage}`);
+    return { available: false, reason: errorMessage };
+  }
+}
+
+// ============================================================
 // 微信搜一搜（通过搜狗微信搜索，无需 API Key）
 // ============================================================
 export async function searchWeixin(query: string): Promise<SearchResult[]> {
@@ -495,7 +551,7 @@ export async function searchWeixin(query: string): Promise<SearchResult[]> {
       const accountElement = $(element).find('.account, .s-p a').first();
       const accountName = accountElement.text().trim();
 
-      const dateElement = $(element).find('.s2, .time').first();
+      const dateElement = $(element).find('.s2, .time, [id*="time"], span[class*="date"], .date').first();
       const dateStr = dateElement.text().trim();
 
       if (title && url) {
@@ -518,8 +574,24 @@ export async function searchWeixin(query: string): Promise<SearchResult[]> {
       }
     });
 
-    console.log(`Weixin search for "${query}": found ${results.length} results`);
-    return results;
+    console.log(`Weixin search for "${query}": found ${results.length} results before availability check`);
+
+    const availableResults: SearchResult[] = [];
+    for (const result of results) {
+      if (result.url.includes('mp.weixin.qq.com')) {
+        const availability = await checkWeixinContentAvailability(result.url);
+        if (availability.available) {
+          availableResults.push(result);
+        } else {
+          console.log(`Filtered out blocked Weixin article: ${result.title} (${availability.reason})`);
+        }
+      } else {
+        availableResults.push(result);
+      }
+    }
+
+    console.log(`Weixin search for "${query}": ${availableResults.length}/${results.length} results available`);
+    return availableResults;
   } catch (error) {
     console.error('Weixin search error:', error instanceof Error ? error.message : error);
     return [];

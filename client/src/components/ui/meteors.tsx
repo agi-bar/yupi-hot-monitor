@@ -1,5 +1,18 @@
 "use client";
-import { cn } from "../../lib/utils";
+import { useMemo } from 'react';
+import { cn } from '../../lib/utils';
+
+function generateMeteorStyles(count: number) {
+  const styles: Array<{ left: number; animationDelay: number; animationDuration: number }> = [];
+  for (let i = 0; i < count; i++) {
+    styles.push({
+      left: Math.floor(Math.random() * (400 - -400) + -400),
+      animationDelay: Math.random() * (0.8 - 0.2) + 0.2,
+      animationDuration: Math.floor(Math.random() * (10 - 2) + 2),
+    });
+  }
+  return styles;
+}
 
 export const Meteors = ({
   number = 12,
@@ -8,10 +21,11 @@ export const Meteors = ({
   number?: number;
   className?: string;
 }) => {
-  const meteors = new Array(number).fill(true);
+  const meteorStyles = useMemo(() => generateMeteorStyles(number), [number]);
+
   return (
     <>
-      {meteors.map((_, idx) => (
+      {meteorStyles.map((meteor, idx) => (
         <span
           key={"meteor" + idx}
           className={cn(
@@ -21,9 +35,9 @@ export const Meteors = ({
           )}
           style={{
             top: 0,
-            left: Math.floor(Math.random() * (400 - -400) + -400) + "px",
-            animationDelay: Math.random() * (0.8 - 0.2) + 0.2 + "s",
-            animationDuration: Math.floor(Math.random() * (10 - 2) + 2) + "s",
+            left: meteor.left + "px",
+            animationDelay: meteor.animationDelay + "s",
+            animationDuration: meteor.animationDuration + "s",
           }}
         />
       ))}
