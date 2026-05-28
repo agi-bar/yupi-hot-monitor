@@ -439,7 +439,7 @@ function App() {
       setTimeout(() => {
         loadData();
       }, 5000);
-    } catch (error) {
+    } catch {
       showToast('触发失败', 'error');
     } finally {
       setIsChecking(false);

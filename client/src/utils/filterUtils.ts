@@ -1,7 +1,7 @@
-import type { FilterState } from '../constants/filters';
+import type { FilterState, TimeRangeValue } from '../constants/filters';
 import type { Hotspot } from '../services/api';
 
-export type TimeRangeValue = '1h' | 'today' | '7d' | '30d' | '';
+export type { TimeRangeValue } from '../constants/filters';
 
 export const TIME_RANGE_MS: Record<TimeRangeValue, number | null> = {
   '': null,

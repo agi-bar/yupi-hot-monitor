@@ -24,7 +24,7 @@ export function useFilteredHotspots({
       source: filters.source || undefined,
       importance: filters.importance || undefined,
       keywordId: filters.keywordId || undefined,
-      timeRange: (filters.timeRange || '') as any,
+      timeRange: filters.timeRange,
       isReal: filters.isReal || undefined,
     });
 
