@@ -38,12 +38,17 @@ export function useSourceOptions() {
   const sourceOptions = sources.map(source => ({
     value: source.id,
     label: source.name,
-    type: source.type,
+    type: source.type || 'social',
     priority: source.priority,
   }));
 
   return {
-    options: [{ value: '', label: '全部来源' }, ...sourceOptions],
+    options: [{ value: '', label: '全部来源' }, ...sourceOptions] as Array<{
+      value: string;
+      label: string;
+      type?: string;
+      priority?: number;
+    }>,
     rawSources: sources,
     loading,
   };

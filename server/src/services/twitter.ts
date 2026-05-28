@@ -56,8 +56,8 @@ function formatSinceDate(daysAgo: number): string {
 
 // ============================================================
 // 构建高级搜索 query
-//   - Top 搜索：近 7 天，min_faves:10，排除 RT 和纯回复
-//   - Latest 搜索：近 3 天，排除 RT 和纯回复
+//   - Top 搜索：近 1 天，min_faves:10，排除 RT 和纯回复
+//   - Latest 搜索：近 12 小时，排除 RT 和纯回复
 // 参考语法：https://github.com/igorbrigadir/twitter-advanced-search
 // ============================================================
 function buildAdvancedQuery(keyword: string, type: 'Top' | 'Latest'): string {
@@ -67,8 +67,8 @@ function buildAdvancedQuery(keyword: string, type: 'Top' | 'Latest'): string {
   parts.push('-filter:retweets');
   parts.push('-filter:replies');
 
-  // 时间范围：Top 看 7 天，Latest 看 3 天
-  const daysAgo = type === 'Top' ? 7 : 3;
+  // 时间范围：Top 看 1 天，Latest 看 12 小时（优化：减少陈旧内容）
+  const daysAgo = type === 'Top' ? 1 : 0.5; // 0.5天 = 12小时
   parts.push(`since:${formatSinceDate(daysAgo)}`);
 
   // Top 搜索额外加 min_faves 保证质量
@@ -186,7 +186,7 @@ export async function searchTwitter(query: string): Promise<SearchResult[]> {
     console.log(`Twitter: ${allTweets.length} → ${qualityTweets.length} after quality filter (likes≥${TWITTER_FILTER_CONFIG.minLikes}, RT≥${TWITTER_FILTER_CONFIG.minRetweets}, views≥${TWITTER_FILTER_CONFIG.minViews}, followers≥${TWITTER_FILTER_CONFIG.minFollowers}, no replies)`);
 
     return qualityTweets.map((tweet: Tweet) => ({
-      title: tweet.text.slice(0, 100),
+      title: tweet.text.slice(0, 200),
       content: tweet.text,
       url: tweet.url,
       source: 'twitter' as const,
@@ -232,7 +232,7 @@ export async function getUserTweets(username: string): Promise<SearchResult[]> {
     }
 
     return data.tweets.map((tweet: Tweet) => ({
-      title: tweet.text.slice(0, 100),
+      title: tweet.text.slice(0, 200),
       content: tweet.text,
       url: tweet.url,
       source: 'twitter' as const,

@@ -73,7 +73,7 @@ export interface SearchResult {
   rawUrl?: string;
 }
 
-export interface BaseDataSource {
+export interface IDataSource {
   readonly id: string;
   readonly name: string;
   readonly icon: string;
@@ -84,6 +84,8 @@ export interface BaseDataSource {
   getMetrics(): DataSourceMetrics;
   getLogs(limit?: number): DataSourceLog[];
 }
+
+export type BaseDataSource = IDataSource;
 
 export interface AuthProvider {
   getAccessToken(): Promise<string>;

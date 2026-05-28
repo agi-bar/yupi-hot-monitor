@@ -4,6 +4,18 @@ import crypto from 'crypto';
 import type { SearchResult } from '../types.js';
 import { parseSearchEngineDate, parseWeixinDate } from '../utils/dateParser.js';
 
+// 清理文本内容中的多余空行和格式字符
+function cleanTextContent(text: string): string {
+  return text
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/\s{2,}/g, ' ')
+    .split('\n')
+    .map(line => line.trim())
+    .filter(line => line.length > 0)
+    .join('\n')
+    .trim();
+}
+
 // User Agent 列表
 const USER_AGENTS = [
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -88,7 +100,7 @@ export async function searchSogou(query: string): Promise<SearchResult[]> {
       if (title && url && !title.includes('大家还在搜')) {
         results.push({
           title,
-          content: snippet || title,
+          content: cleanTextContent(snippet || title),
           url,
           source: 'sogou' as const,
           publishedAt
@@ -212,7 +224,7 @@ export async function searchBilibili(query: string): Promise<SearchResult[]> {
 
     const results: SearchResult[] = response.data.data.result.map(video => ({
       title: video.title.replace(/<\/?em[^>]*>/g, ''), // 去掉高亮标签
-      content: video.description || video.title.replace(/<\/?em[^>]*>/g, ''),
+      content: cleanTextContent(video.description || video.title.replace(/<\/?em[^>]*>/g, '')),
       url: `https://www.bilibili.com/video/${video.bvid}`,
       source: 'bilibili' as const,
       sourceId: video.bvid,
@@ -313,7 +325,7 @@ export async function getBilibiliUserVideos(mid: number): Promise<SearchResult[]
 
     const results: SearchResult[] = response.data.data.list.vlist.map(video => ({
       title: video.title,
-      content: video.description || video.title,
+      content: cleanTextContent(video.description || video.title),
       url: `https://www.bilibili.com/video/${video.bvid}`,
       source: 'bilibili' as const,
       sourceId: video.bvid,
@@ -563,7 +575,7 @@ export async function searchWeixin(query: string): Promise<SearchResult[]> {
 
         results.push({
           title,
-          content: snippet || accountName || title,
+          content: cleanTextContent(snippet || accountName || title),
           url,
           source: 'weixin' as const,
           publishedAt,

@@ -1,31 +1,41 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Flame, Search, Plus, Bell, Trash2, 
   ExternalLink, RefreshCw, X, Check, AlertTriangle,
-  Zap, TrendingUp, Twitter, Globe, Eye, Activity, Clock, Target,
-  MessageCircle, Repeat2, Quote, User, Shield, ShieldAlert,
+  Zap, TrendingUp, Clock, Target, Activity, MessageCircle, Eye,
+  Repeat2, Quote, User, Shield, ShieldAlert,
   ChevronDown, ChevronUp, ChevronsUpDown, ThermometerSun, FileText,
   Settings
 } from 'lucide-react';
 import { 
   keywordsApi, hotspotsApi, notificationsApi, triggerHotspotCheck,
-  type Keyword, type Hotspot, type Stats, type Notification
+  type Keyword, type Hotspot, type Stats
 } from './services/api';
 import { onNewHotspot, onNotification, subscribeToKeywords } from './services/socket';
+import { 
+  NOTIFICATION_MAX_DISPLAY_COUNT,
+  NOTIFICATION_MAX_LENGTH,
+  type Notification 
+} from './types/notification';
+import { generateNotificationId } from './utils/idGenerator';
+import { toNotification } from './utils/notificationConverter';
 import { cn } from './lib/utils';
 import { Spotlight } from './components/ui/spotlight';
 import { BackgroundBeams } from './components/ui/background-beams';
 import { Meteors } from './components/ui/meteors';
-import FilterSortBar, { defaultFilterState, type FilterState } from './components/FilterSortBar';
-import { sortHotspots } from './utils/sortHotspots';
+import FilterSortBar from './components/FilterSortBar';
+import { defaultFilterState, type FilterState } from './constants/filters';
 import { relativeTime, formatDateTime } from './utils/relativeTime';
+import { buildFilterParams } from './utils/filterUtils';
 import Pagination from './components/Pagination';
 import ThemeToggle from './components/ThemeToggle';
 import SourcesManager from './components/SourcesManager';
 import ConfirmDialog from './components/ConfirmDialog';
 import NotificationPanel from './components/NotificationPanel';
-import { useTheme } from './contexts/ThemeContext';
+import { useTheme } from './hooks/useTheme';
+import { getSourceLabel, getSourceIcon } from './services/sourcesConfig';
+import { useFilteredHotspots } from './hooks/useFilteredHotspots';
 // TextGenerateEffect available for future use
 
 /** 计算热度综合指标（归一化 0-100） */
@@ -52,11 +62,13 @@ function getHeatLevel(score: number): { label: string; color: string } {
 }
 
 function App() {
-  useTheme(); // Initialize theme context
+  useTheme();
+  
   const [keywords, setKeywords] = useState<Keyword[]>([]);
   const [hotspots, setHotspots] = useState<Hotspot[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
   const [notifications, setNotifications] = useState<Notification[]>([]);
+  const notificationsRef = useRef(notifications);
   const [unreadCount, setUnreadCount] = useState(0);
   
   const [newKeyword, setNewKeyword] = useState('');
@@ -75,7 +87,7 @@ function App() {
   const [searchResults, setSearchResults] = useState<Hotspot[]>([]);
   // 展开/折叠状态
   const [expandedReasons, setExpandedReasons] = useState<Set<string>>(new Set());
-  const [expandedContents, setExpandedContents] = useState<Set<string>>(new Set());
+  const [expandedContents, setExpandedContents] = useState<Set<string>>(new Set()); // 原始内容默认展开
   const [allReasonsExpanded, setAllReasonsExpanded] = useState(false);
   // 热点选择状态
   const [selectedHotspots, setSelectedHotspots] = useState<Set<string>>(new Set());
@@ -95,23 +107,18 @@ function App() {
     onConfirm: () => {}
   });
 
+  // 热点跳转状态
+  const [navigatingHotspotId, setNavigatingHotspotId] = useState<string | null>(null);
+
   // 加载数据
   const loadData = useCallback(async () => {
     setIsLoading(true);
     try {
-      const filterParams: Record<string, string | number> = {
+      const filterParams = {
+        ...buildFilterParams(dashboardFilters),
         limit: pageSize,
         page: currentPage,
       };
-      // Apply dashboard filters
-      if (dashboardFilters.source) filterParams.source = dashboardFilters.source;
-      if (dashboardFilters.sourceRecordId) filterParams.sourceRecordId = dashboardFilters.sourceRecordId;
-      if (dashboardFilters.importance) filterParams.importance = dashboardFilters.importance;
-      if (dashboardFilters.keywordId) filterParams.keywordId = dashboardFilters.keywordId;
-      if (dashboardFilters.timeRange) filterParams.timeRange = dashboardFilters.timeRange;
-      if (dashboardFilters.isReal) filterParams.isReal = dashboardFilters.isReal;
-      if (dashboardFilters.sortBy) filterParams.sortBy = dashboardFilters.sortBy;
-      if (dashboardFilters.sortOrder) filterParams.sortOrder = dashboardFilters.sortOrder;
 
       const [keywordsData, hotspotsData, statsData, notifData] = await Promise.all([
         keywordsApi.getAll(),
@@ -121,10 +128,12 @@ function App() {
       ]);
       setKeywords(keywordsData);
       setHotspots(hotspotsData.data);
+      // 自动展开所有原始内容
+      setExpandedContents(new Set(hotspotsData.data.map((h: Hotspot) => h.id)));
       setTotalPages(hotspotsData.pagination.totalPages);
       setTotal(hotspotsData.pagination.total);
       setStats(statsData);
-      setNotifications(notifData.data);
+      setNotifications((notifData.data as unknown[]).map(toNotification));
       setUnreadCount(notifData.unreadCount);
       setNotificationPage(1);
       setHasMoreNotifications(notifData.pagination.page < notifData.pagination.totalPages);
@@ -194,6 +203,11 @@ function App() {
     window.history.replaceState({}, '', url.toString());
   }, [pageSize]);
 
+  // 同步notifications到ref
+  useEffect(() => {
+    notificationsRef.current = notifications;
+  }, [notifications]);
+
   useEffect(() => {
     loadData();
   }, [loadData]);
@@ -202,12 +216,29 @@ function App() {
   useEffect(() => {
     const unsubHotspot = onNewHotspot((hotspot) => {
       setHotspots(prev => [hotspot as Hotspot, ...prev.slice(0, 19)]);
-      showToast('发现新热点: ' + hotspot.title.slice(0, 30), 'success');
+      showToast('发现新热点: ' + hotspot.title.slice(0, NOTIFICATION_MAX_LENGTH.TITLE), 'success');
       loadData();
     });
 
-    const unsubNotif = onNotification(() => {
-      setUnreadCount(prev => prev + 1);
+    const unsubNotif = onNotification((notification) => {
+      const newNotification: Notification = {
+        id: generateNotificationId(),
+        type: notification.type,
+        title: notification.title,
+        content: notification.content,
+        isRead: false,
+        createdAt: new Date().toISOString(),
+        hotspotId: notification.hotspotId,
+      };
+      
+      const exists = notificationsRef.current.some(n => 
+        notification.hotspotId && n.hotspotId === notification.hotspotId
+      );
+      if (!exists) {
+        setUnreadCount(c => c + 1);
+        setNotifications(prev => [newNotification, ...prev.slice(0, 19)]);
+      }
+      showToast(`新通知: ${notification.title.slice(0, NOTIFICATION_MAX_LENGTH.TITLE - 5)}...`, 'success');
     });
 
     return () => {
@@ -395,12 +426,20 @@ function App() {
 
   // 手动触发检查
   const handleManualCheck = async () => {
+    if (isChecking) {
+      return;
+    }
+    
     setIsChecking(true);
+    
     try {
       await triggerHotspotCheck();
       showToast('热点检查已触发', 'success');
-      setTimeout(loadData, 5000);
-    } catch {
+      
+      setTimeout(() => {
+        loadData();
+      }, 5000);
+    } catch (error) {
       showToast('触发失败', 'error');
     } finally {
       setIsChecking(false);
@@ -496,7 +535,11 @@ function App() {
     try {
       const newPage = notificationPage + 1;
       const data = await notificationsApi.getAll({ page: newPage, limit: 20 });
-      setNotifications(prev => [...prev, ...data.data]);
+      setNotifications(prev => {
+        const existingIds = new Set(prev.map(n => n.id));
+        const newNotifications = (data.data as unknown[]).map(toNotification).filter(n => !existingIds.has(n.id));
+        return [...prev, ...newNotifications];
+      });
       setNotificationPage(newPage);
       setHasMoreNotifications(data.pagination.page < data.pagination.totalPages);
     } catch (error) {
@@ -505,17 +548,123 @@ function App() {
   };
 
   // 跳转到热点详情
-  const navigateToHotspot = (hotspotId: string) => {
+  const navigateToHotspot = async (hotspotId: string) => {
     setShowNotifications(false);
-    // 查找热点并滚动到对应位置
-    const hotspot = hotspots.find(h => h.id === hotspotId);
-    if (hotspot) {
-      const element = document.getElementById(`hotspot-${hotspotId}`);
-      if (element) {
-        element.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        element.classList.add('ring-2', 'ring-blue-500');
-        setTimeout(() => element.classList.remove('ring-2', 'ring-blue-500'), 2000);
+    setNavigatingHotspotId(hotspotId);
+    
+    try {
+      // 首先在当前页面的热点列表中查找
+      const localHotspot = hotspots.find(h => h.id === hotspotId);
+      
+      if (localHotspot) {
+        // 热点在当前页面，直接滚动到对应位置
+        scrollToHotspotElement(hotspotId);
+      } else {
+        // 热点不在当前页面，需要切换到对应页面
+        showToast(`正在定位热点...`, 'success');
+        
+        // 通过 API 查找热点所在页面
+        const hotspot = await hotspotsApi.getById(hotspotId);
+        
+        if (!hotspot) {
+          showToast(`热点不存在或已被删除`, 'error');
+          return;
+        }
+        
+        // 计算热点所在的页码
+        // 使用热点列表查询来找到对应的页码
+        const targetPage = await findHotspotPage(hotspotId);
+        
+        if (targetPage === -1) {
+          showToast(`未找到热点，可能已被删除`, 'error');
+          return;
+        }
+        
+        // 切换到目标页面
+        if (targetPage !== currentPage) {
+          setCurrentPage(targetPage);
+          // 更新 URL
+          const url = new URL(window.location.href);
+          url.searchParams.set('page', targetPage.toString());
+          window.history.replaceState({}, '', url.toString());
+          
+          // 等待数据加载完成后再滚动
+          await new Promise(resolve => setTimeout(resolve, 500));
+        }
+        
+        // 滚动到对应位置
+        scrollToHotspotElement(hotspotId);
       }
+    } catch (error) {
+      console.error('导航到热点失败:', error);
+      showToast(`定位热点失败`, 'error');
+    } finally {
+      setNavigatingHotspotId(null);
+    }
+  };
+
+  // 滚动到热点元素
+  const scrollToHotspotElement = (hotspotId: string) => {
+    const element = document.getElementById(`hotspot-${hotspotId}`);
+    if (element) {
+      element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      element.classList.add('ring-2', 'ring-blue-500', 'animate-pulse');
+      setTimeout(() => {
+        element.classList.remove('ring-2', 'ring-blue-500', 'animate-pulse');
+      }, 3000);
+    }
+  };
+
+  // 查找热点所在的页码
+  const findHotspotPage = async (hotspotId: string): Promise<number> => {
+    try {
+      // 使用二分查找优化页码搜索
+      let low = 1;
+      let high = totalPages;
+      
+      while (low <= high) {
+        const mid = Math.floor((low + high) / 2);
+        
+        // 查询对应页码的数据
+        const pageData = await hotspotsApi.getAll({
+          page: mid,
+          limit: pageSize,
+          ...dashboardFilters
+        });
+        
+        // 检查该页是否包含目标热点
+        const found = pageData.data.some(h => h.id === hotspotId);
+        
+        if (found) {
+          return mid;
+        }
+        
+        // 根据分页逻辑调整搜索范围
+        // 这里简化处理，实际应该根据排序字段和 createdAt 来判断
+        if (mid === low) {
+          // 已经检查了最小页但没找到，说明热点可能已被删除或不在列表中
+          return -1;
+        }
+        
+        // 继续二分查找
+        if (pageData.data.length > 0) {
+          const lastItem = pageData.data[pageData.data.length - 1];
+          if (new Date(lastItem.createdAt) > new Date()) {
+            // 如果最后一页的创建时间比当前页最新，创建时间更早，应该向前找
+            high = mid - 1;
+          } else {
+            // 创建时间更晚，应该向后找
+            low = mid + 1;
+          }
+        } else {
+          return -1;
+        }
+      }
+      
+      return -1;
+    } catch (error) {
+      console.error('查找热点页码失败:', error);
+      return -1;
     }
   };
 
@@ -559,43 +708,11 @@ function App() {
   };
 
   // Client-side filtering/sorting for search results
-  const filteredSearchResults = useMemo(() => {
-    let results = [...searchResults];
-
-    // Apply filters
-    if (searchFilters.source) {
-      results = results.filter(h => h.source === searchFilters.source);
-    }
-    if (searchFilters.importance) {
-      results = results.filter(h => h.importance === searchFilters.importance);
-    }
-    if (searchFilters.isReal === 'true') {
-      results = results.filter(h => h.isReal);
-    } else if (searchFilters.isReal === 'false') {
-      results = results.filter(h => !h.isReal);
-    }
-    if (searchFilters.keywordId) {
-      results = results.filter(h => h.keyword?.id === searchFilters.keywordId);
-    }
-    if (searchFilters.timeRange) {
-      const now = new Date();
-      let dateFrom: Date | null = null;
-      switch (searchFilters.timeRange) {
-        case '1h': dateFrom = new Date(now.getTime() - 60 * 60 * 1000); break;
-        case 'today': dateFrom = new Date(now); dateFrom.setHours(0, 0, 0, 0); break;
-        case '7d': dateFrom = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000); break;
-        case '30d': dateFrom = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000); break;
-      }
-      if (dateFrom) {
-        results = results.filter(h => new Date(h.createdAt) >= dateFrom!);
-      }
-    }
-
-    // Apply sorting using shared utility
-    results = sortHotspots(results, searchFilters.sortBy || 'createdAt', (searchFilters.sortOrder || 'desc') as 'asc' | 'desc');
-
-    return results;
-  }, [searchResults, searchFilters]);
+  const filteredSearchResults = useFilteredHotspots({
+    hotspots: searchResults,
+    filters: searchFilters,
+    enableClientFilter: true,
+  });
 
   const getImportanceIcon = (importance: string) => {
     switch (importance) {
@@ -604,33 +721,6 @@ function App() {
       case 'medium': return <Zap className="w-4 h-4" />;
       default: return <TrendingUp className="w-4 h-4" />;
     }
-  };
-
-  const getSourceIcon = (source: string) => {
-    switch (source) {
-      case 'twitter': return <Twitter className="w-4 h-4" />;
-      case 'bilibili': return <Eye className="w-4 h-4" />;
-      case 'weibo': return <Activity className="w-4 h-4" />;
-      case 'weixin': return <MessageCircle className="w-4 h-4" />;
-      case 'sogou': return <Search className="w-4 h-4" />;
-      case 'hackernews': return <Zap className="w-4 h-4" />;
-      default: return <Globe className="w-4 h-4" />;
-    }
-  };
-
-  const getSourceLabel = (source: string) => {
-    const labels: Record<string, string> = {
-      twitter: 'Twitter',
-      bing: 'Bing',
-      google: 'Google',
-      sogou: '搜狗',
-      bilibili: 'Bilibili',
-      weibo: '微博热搜',
-      weixin: '微信搜一搜',
-      hackernews: 'HackerNews',
-      duckduckgo: 'DuckDuckGo'
-    };
-    return labels[source] || source;
   };
 
   return (
@@ -696,12 +786,13 @@ function App() {
             {/* Actions */}
             <div className="flex items-center gap-3">
               <motion.button
+                type="button"
                 onClick={handleManualCheck}
                 disabled={isChecking}
                 whileHover={{ scale: 1.02 }}
                 whileTap={{ scale: 0.98 }}
                 className={cn(
-                  "px-4 py-2.5 rounded-xl text-sm font-medium flex items-center gap-2 transition-all",
+                  "px-4 py-2.5 rounded-xl text-sm font-medium flex items-center gap-2 transition-all cursor-pointer",
                   isChecking 
                     ? "bg-blue-500/20 text-blue-400 cursor-wait"
                     : "bg-gradient-to-r from-blue-600 to-cyan-500 text-white shadow-lg shadow-blue-500/25 hover:shadow-blue-500/40"
@@ -723,7 +814,9 @@ function App() {
                   <Bell className="w-5 h-5 text-slate-400 hover:text-slate-300 transition-colors" />
                   {unreadCount > 0 && (
                     <span className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 rounded-full text-[10px] font-bold flex items-center justify-center text-white">
-                      {unreadCount > 9 ? '9+' : unreadCount}
+                      {unreadCount > NOTIFICATION_MAX_DISPLAY_COUNT 
+                        ? `${NOTIFICATION_MAX_DISPLAY_COUNT}+` 
+                        : unreadCount}
                     </span>
                   )}
                 </button>
@@ -740,6 +833,7 @@ function App() {
                       onNavigate={navigateToHotspot}
                       onLoadMore={loadMoreNotifications}
                       hasMore={hasMoreNotifications}
+                      navigatingHotspotId={navigatingHotspotId}
                     />
                   )}
                 </AnimatePresence>
@@ -1146,9 +1240,125 @@ function App() {
                                     exit={{ height: 0, opacity: 0 }}
                                     className="overflow-hidden"
                                   >
-                                    <p className="text-xs text-slate-500 mt-1 pl-4 border-l-2 border-white/10 whitespace-pre-wrap break-words max-h-40 overflow-y-auto">
-                                      {hotspot.content}
-                                    </p>
+                                    <div className="mt-2 pl-4 border-l-2 border-white/10 space-y-3">
+                                      {/* AI 分析信息 */}
+                                      {hotspot.summary && (
+                                        <div className="bg-blue-500/5 rounded-lg p-2 border border-blue-500/10">
+                                          <div className="text-[10px] text-blue-400 mb-1">📝 AI 摘要</div>
+                                          <p className="text-xs text-slate-400">{hotspot.summary}</p>
+                                        </div>
+                                      )}
+                                      
+                                      {/* 相关性理由 */}
+                                      {hotspot.relevanceReason && (
+                                        <div className="bg-purple-500/5 rounded-lg p-2 border border-purple-500/10">
+                                          <div className="text-[10px] text-purple-400 mb-1">🧠 AI 分析理由</div>
+                                          <p className="text-xs text-slate-400">{hotspot.relevanceReason}</p>
+                                        </div>
+                                      )}
+                                      
+                                      {/* 质量指标 */}
+                                      <div className="grid grid-cols-2 gap-2 text-[10px]">
+                                        <div className="flex items-center gap-1 text-slate-500">
+                                          <Target className="w-3 h-3" />
+                                          <span className="ml-1">相关性: {hotspot.relevance}%</span>
+                                        </div>
+                                        <div className="flex items-center gap-1 text-slate-500">
+                                          {getSourceIcon(hotspot.source)}
+                                          <span>{getSourceLabel(hotspot.source)}</span>
+                                        </div>
+                                        {hotspot.keywordMentioned !== null && (
+                                          <div className="col-span-2 flex items-center gap-1">
+                                            <span className={`text-[10px] px-1.5 py-0.5 rounded ${hotspot.keywordMentioned ? 'bg-green-500/10 text-green-400' : 'bg-yellow-500/10 text-yellow-400'}`}>
+                                              {hotspot.keywordMentioned ? '✅ 关键词直接提及' : '⚠️ 关键词间接相关'}
+                                            </span>
+                                          </div>
+                                        )}
+                                      </div>
+                                      
+                                      {/* 发布信息和互动数据 */}
+                                      <div className="flex flex-wrap items-center gap-3 text-[10px] text-slate-600">
+                                        {hotspot.publishedAt && (
+                                          <span className="flex items-center gap-1">
+                                            <Clock className="w-3 h-3" />
+                                            {formatDateTime(hotspot.publishedAt)}
+                                          </span>
+                                        )}
+                                        {hotspot.authorName && (
+                                          <span className="flex items-center gap-1">
+                                            <User className="w-3 h-3" />
+                                            {hotspot.authorName}
+                                            {hotspot.authorFollowers && ` (${hotspot.authorFollowers.toLocaleString()} 粉丝)`}
+                                          </span>
+                                        )}
+                                      </div>
+                                      
+                                      {/* 互动数据详情 */}
+                                      <div className="grid grid-cols-3 gap-2 text-[10px]">
+                                        {hotspot.viewCount != null && hotspot.viewCount > 0 && (
+                                          <div className="flex items-center gap-1 text-slate-500 bg-white/5 rounded px-2 py-1">
+                                            <Eye className="w-3 h-3" />
+                                            <span>{hotspot.viewCount.toLocaleString()}</span>
+                                          </div>
+                                        )}
+                                        {hotspot.likeCount != null && hotspot.likeCount > 0 && (
+                                          <div className="flex items-center gap-1 text-slate-500 bg-white/5 rounded px-2 py-1">
+                                            <Zap className="w-3 h-3" />
+                                            <span>{hotspot.likeCount.toLocaleString()}</span>
+                                          </div>
+                                        )}
+                                        {hotspot.retweetCount != null && hotspot.retweetCount > 0 && (
+                                          <div className="flex items-center gap-1 text-slate-500 bg-white/5 rounded px-2 py-1">
+                                            <Repeat2 className="w-3 h-3" />
+                                            <span>{hotspot.retweetCount.toLocaleString()}</span>
+                                          </div>
+                                        )}
+                                        {hotspot.replyCount != null && hotspot.replyCount > 0 && (
+                                          <div className="flex items-center gap-1 text-slate-500 bg-white/5 rounded px-2 py-1">
+                                            <MessageCircle className="w-3 h-3" />
+                                            <span>{hotspot.replyCount.toLocaleString()}</span>
+                                          </div>
+                                        )}
+                                        {hotspot.commentCount != null && hotspot.commentCount > 0 && (
+                                          <div className="flex items-center gap-1 text-slate-500 bg-white/5 rounded px-2 py-1">
+                                            <MessageCircle className="w-3 h-3" />
+                                            <span>{hotspot.commentCount.toLocaleString()}</span>
+                                          </div>
+                                        )}
+                                        {hotspot.quoteCount != null && hotspot.quoteCount > 0 && (
+                                          <div className="flex items-center gap-1 text-slate-500 bg-white/5 rounded px-2 py-1">
+                                            <Quote className="w-3 h-3" />
+                                            <span>{hotspot.quoteCount.toLocaleString()}</span>
+                                          </div>
+                                        )}
+                                      </div>
+                                      
+                                      {/* 完整内容 */}
+                                      <div>
+                                        <div className="text-[10px] text-slate-600 mb-1">📄 原始内容</div>
+                                        <p className="text-xs text-slate-500 whitespace-pre-wrap break-words">
+                                          {hotspot.content}
+                                        </p>
+                                      </div>
+                                      
+                                      {/* 来源链接 */}
+                                      <div className="flex items-center justify-between pt-2 border-t border-white/5">
+                                        <a
+                                          href={hotspot.url}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          className="inline-flex items-center gap-1 text-[10px] text-blue-400 hover:text-blue-300 transition-colors"
+                                        >
+                                          <ExternalLink className="w-3 h-3" />
+                                          查看原文
+                                        </a>
+                                        {hotspot.authorUsername && (
+                                          <span className="text-[10px] text-slate-600">
+                                            @{hotspot.authorUsername}
+                                          </span>
+                                        )}
+                                      </div>
+                                    </div>
                                   </motion.div>
                                 )}
                               </AnimatePresence>

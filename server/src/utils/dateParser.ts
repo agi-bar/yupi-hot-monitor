@@ -4,7 +4,7 @@
  */
 
 /**
- * 解析相对时间字符串（如"2小时前"、"昨天"、"3天前"）
+ * 解析相对时间字符串（如"2小时前"、"昨天"、"3天前"、"1 day ago"）
  * @param relativeStr 相对时间字符串
  * @returns Date 对象，如果无法解析则返回 null
  */
@@ -14,20 +14,64 @@ export function parseRelativeDate(relativeStr: string): Date | null {
   const now = new Date();
   const lower = relativeStr.toLowerCase();
 
-  // 匹配"X分钟前"、"X小时前"、"X天前"等格式
+  // 匹配"X分钟前"、"X分钟前"等中文格式
   const minutesMatch = lower.match(/(\d+)\s*分钟前/);
   if (minutesMatch) {
     return new Date(now.getTime() - parseInt(minutesMatch[1]) * 60 * 1000);
   }
 
+  // 匹配"X小时前"等中文格式
   const hoursMatch = lower.match(/(\d+)\s*小时前/);
   if (hoursMatch) {
     return new Date(now.getTime() - parseInt(hoursMatch[1]) * 60 * 60 * 1000);
   }
 
+  // 匹配"X天前"等中文格式
   const daysMatch = lower.match(/(\d+)\s*天前/);
   if (daysMatch) {
     return new Date(now.getTime() - parseInt(daysMatch[1]) * 24 * 60 * 60 * 1000);
+  }
+
+  // 匹配英文 "X minutes ago"、"X minute ago"
+  const engMinutesMatch = lower.match(/(\d+)\s*(?:minutes?|mins?)\s*ago/);
+  if (engMinutesMatch) {
+    return new Date(now.getTime() - parseInt(engMinutesMatch[1]) * 60 * 1000);
+  }
+
+  // 匹配英文 "X hours ago"、"X hour ago"
+  const engHoursMatch = lower.match(/(\d+)\s*(?:hours?|hrs?)\s*ago/);
+  if (engHoursMatch) {
+    return new Date(now.getTime() - parseInt(engHoursMatch[1]) * 60 * 60 * 1000);
+  }
+
+  // 匹配英文 "X days ago"、"X day ago"
+  const engDaysMatch = lower.match(/(\d+)\s*(?:days?)\s*ago/);
+  if (engDaysMatch) {
+    return new Date(now.getTime() - parseInt(engDaysMatch[1]) * 24 * 60 * 60 * 1000);
+  }
+
+  // 匹配英文 "X weeks ago"、"X week ago"
+  const engWeeksMatch = lower.match(/(\d+)\s*(?:weeks?)\s*ago/);
+  if (engWeeksMatch) {
+    return new Date(now.getTime() - parseInt(engWeeksMatch[1]) * 7 * 24 * 60 * 60 * 1000);
+  }
+
+  // 匹配英文 "X months ago"、"X month ago"
+  const engMonthsMatch = lower.match(/(\d+)\s*(?:months?)\s*ago/);
+  if (engMonthsMatch) {
+    const months = parseInt(engMonthsMatch[1]);
+    const result = new Date(now);
+    result.setMonth(result.getMonth() - months);
+    return result;
+  }
+
+  // 匹配英文 "X years ago"、"X year ago"
+  const engYearsMatch = lower.match(/(\d+)\s*(?:years?|yrs?)\s*ago/);
+  if (engYearsMatch) {
+    const years = parseInt(engYearsMatch[1]);
+    const result = new Date(now);
+    result.setFullYear(result.getFullYear() - years);
+    return result;
   }
 
   // 匹配"刚刚"等
@@ -40,6 +84,14 @@ export function parseRelativeDate(relativeStr: string): Date | null {
     const yesterday = new Date(now);
     yesterday.setDate(yesterday.getDate() - 1);
     yesterday.setHours(12, 0, 0, 0); // 默认设为中午12点
+    return yesterday;
+  }
+
+  // 匹配英文 "yesterday"
+  if (lower === 'yesterday') {
+    const yesterday = new Date(now);
+    yesterday.setDate(yesterday.getDate() - 1);
+    yesterday.setHours(12, 0, 0, 0);
     return yesterday;
   }
 

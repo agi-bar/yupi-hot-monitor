@@ -1,2 +1,2 @@
-export * from './sourceEvents';
-export * from './sourceEventSubscriber';
+export * from './sourceEvents.js';
+export * from './sourceEventSubscriber.js';

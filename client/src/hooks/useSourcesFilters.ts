@@ -1,8 +1,17 @@
 import { useState, useCallback } from 'react';
-import type { SourceFilters, SourceType, SourceStatus } from '@hot-monitor/types';
 import { useDebouncedValue } from './useDebouncedValue';
 
 const DEBOUNCE_DELAY = 300;
+
+export type SourceType = string;
+export type SourceStatus = string;
+
+interface SourceFilters {
+  type: SourceType | '';
+  category: string;
+  status: SourceStatus | '';
+  search: string;
+}
 
 const initialFilters: SourceFilters = {
   type: '',

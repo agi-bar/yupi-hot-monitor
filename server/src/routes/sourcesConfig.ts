@@ -1,27 +1,52 @@
 import { Router } from 'express';
-import { getAllSources, getEnabledSources, getSourcesByType, SOURCE_TYPE_MAP, getSourceById } from '../config/sources.js';
+import { prisma } from '../db.js';
+import { SOURCE_TYPE_MAP } from '../config/sources.js';
 
 const router = Router();
 
-router.get('/sources/config', (req, res) => {
+router.get('/sources/config', async (req, res) => {
   try {
     const { enabled, type } = req.query;
 
-    let sources;
-
+    const where: any = {};
+    
     if (enabled === 'true') {
-      sources = getEnabledSources();
-    } else if (type && SOURCE_TYPE_MAP[type as string]) {
-      sources = getSourcesByType(type as 'social' | 'search' | 'news' | 'video');
-    } else {
-      sources = getAllSources();
+      where.status = 'active';
     }
+    
+    if (type && SOURCE_TYPE_MAP[type as string]) {
+      where.category = type;
+    }
+
+    const sources = await prisma.source.findMany({
+      where,
+      orderBy: { priority: 'asc' },
+      select: {
+        id: true,
+        name: true,
+        type: true,
+        category: true,
+        status: true,
+        priority: true,
+        description: true,
+        isPublic: true
+      }
+    });
+
+    const formattedSources = sources.map(s => ({
+      id: s.type,
+      name: s.name,
+      type: s.category,
+      enabled: s.status === 'active',
+      priority: s.priority,
+      description: s.description
+    }));
 
     res.json({
       success: true,
-      data: sources,
+      data: formattedSources,
       meta: {
-        total: sources.length,
+        total: formattedSources.length,
         types: SOURCE_TYPE_MAP
       }
     });
@@ -47,10 +72,13 @@ router.get('/sources/types', (req, res) => {
   }
 });
 
-router.get('/sources/:id', (req, res) => {
+router.get('/sources/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const source = getSourceById(id);
+    
+    const source = await prisma.source.findFirst({
+      where: { type: id }
+    });
 
     if (!source) {
       return res.status(404).json({
@@ -61,7 +89,14 @@ router.get('/sources/:id', (req, res) => {
 
     res.json({
       success: true,
-      data: source
+      data: {
+        id: source.type,
+        name: source.name,
+        type: source.category,
+        enabled: source.status === 'active',
+        priority: source.priority,
+        description: source.description
+      }
     });
   } catch (error) {
     res.status(500).json({

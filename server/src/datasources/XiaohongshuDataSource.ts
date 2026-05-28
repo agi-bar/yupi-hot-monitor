@@ -27,8 +27,6 @@ export class XiaohongshuDataSource extends BaseDataSource {
   readonly name = '小红书';
   readonly icon = '📕';
   
-  private requestCount = 0;
-  private lastResetTime = Date.now();
   private readonly MIN_INTERVAL = 5000;
   
   constructor() {

@@ -1,12 +1,16 @@
 import { Router } from 'express';
 import { prisma } from '../db.js';
 import { sortHotspots } from '../utils/sortHotspots.js';
-import { redisClient as redis } from '../utils/redis.js';
+import { getRedis } from '../utils/redis.js';
 import { logInfo, logError } from '../utils/logger.js';
 
 const router = Router();
 
 const DEDUP_CACHE_PREFIX = 'hotspot:dedup:';
+
+// 删除热点缓存过期时间：30天（添加随机抖动±1天防止缓存雪崩）
+const DELETE_CACHE_BASE = 30 * 24 * 60 * 60;
+const DELETE_CACHE_JITTER = 24 * 60 * 60;
 
 // 获取所有热点
 router.get('/', async (req, res) => {
@@ -306,15 +310,16 @@ router.delete('/:id', async (req, res) => {
     });
 
     // ✅ 保留去重缓存（不清理），确保删除的数据永远不会再被抓取
-    // 缓存会在24小时后自然过期，但用户期望是永久过滤
-    // 为此我们使用一个更长的过期时间：30天
+    // 缓存会在30天后自然过期，但用户期望是永久过滤
+    // 使用带随机抖动的过期时间（30天±1天），防止缓存雪崩
     try {
       const cacheKey = `${DEDUP_CACHE_PREFIX}${hotspot.source}:${hotspot.title}`;
-      const existingTTL = await redis.ttl(cacheKey);
-      // 如果缓存不存在或剩余时间少于30天，则设置为30天
-      if (existingTTL < 0 || existingTTL < 30 * 24 * 60 * 60) {
-        await redis.setEx(cacheKey, 30 * 24 * 60 * 60, 'deleted');
-        console.log(`[Hotspots API] Set permanent dedup cache (30 days) for: ${hotspot.source}:${hotspot.title.slice(0, 30)}...`);
+      const existingTTL = await getRedis().ttl(cacheKey);
+      // 如果缓存不存在或剩余时间少于30天，则设置为30天±随机
+      if (existingTTL < 0 || existingTTL < DELETE_CACHE_BASE) {
+        const cacheTTL = DELETE_CACHE_BASE + Math.floor(Math.random() * DELETE_CACHE_JITTER);
+        await getRedis().setex(cacheKey, cacheTTL, 'deleted');
+        console.log(`[Hotspots API] Set permanent dedup cache (${(cacheTTL/86400).toFixed(0)} days) for: ${hotspot.source}:${hotspot.title.slice(0, 30)}...`);
       }
     } catch (cacheError) {
       console.warn('[Hotspots API] Failed to set dedup cache:', cacheError);
@@ -357,15 +362,17 @@ router.post('/batch-delete', async (req, res) => {
       where: { id: { in: ids } }
     });
 
-    // ✅ 批量设置去重缓存（30天），确保删除的数据永远不会再被抓取
+    // ✅ 批量设置去重缓存（30天±随机），确保删除的数据永远不会再被抓取
     try {
-      const pipeline = redis.pipeline();
+      const pipeline = getRedis().pipeline();
       for (const hotspot of hotspotsToDelete) {
         const cacheKey = `${DEDUP_CACHE_PREFIX}${hotspot.source}:${hotspot.title}`;
-        pipeline.setEx(cacheKey, 30 * 24 * 60 * 60, 'deleted');
+        // 使用带随机抖动的过期时间，防止缓存雪崩
+        const cacheTTL = DELETE_CACHE_BASE + Math.floor(Math.random() * DELETE_CACHE_JITTER);
+        pipeline.setex(cacheKey, cacheTTL, 'deleted');
       }
       await pipeline.exec();
-      console.log(`[Hotspots API] Set ${hotspotsToDelete.length} permanent dedup cache entries (30 days)`);
+      console.log(`[Hotspots API] Set ${hotspotsToDelete.length} permanent dedup cache entries (${(DELETE_CACHE_BASE/86400).toFixed(0)}±${(DELETE_CACHE_JITTER/86400).toFixed(0)} days)`);
     } catch (cacheError) {
       console.warn('[Hotspots API] Failed to set dedup cache:', cacheError);
     }

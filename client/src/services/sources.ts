@@ -4,6 +4,7 @@ export interface Source {
   id: string;
   name: string;
   type: string;
+  dataSourceId?: string | null;
   category: string | null;
   status: 'active' | 'paused' | 'error';
   priority: number;
@@ -44,22 +45,62 @@ export interface SourceReport {
   topHotspots: unknown[];
 }
 
+interface ApiError {
+  error?: string;
+  message?: string;
+  details?: string;
+  code?: string;
+  validTypes?: string[];
+  duplicateTypes?: string[];
+  errors?: string[];
+}
+
+function formatApiError(status: number, errorData: ApiError): string {
+  let message = errorData.error || errorData.message || `请求失败 (${status})`;
+  
+  if (errorData.code) {
+    message = `[${errorData.code}] ${message}`;
+  }
+  
+  if (errorData.details) {
+    message = `${message}: ${errorData.details}`;
+  }
+  
+  if (errorData.validTypes && errorData.validTypes.length > 0) {
+    message = `${message}，可用类型: ${errorData.validTypes.join(', ')}`;
+  }
+  
+  if (errorData.duplicateTypes && errorData.duplicateTypes.length > 0) {
+    message = `${message}，重复类型: ${errorData.duplicateTypes.join(', ')}`;
+  }
+  
+  if (errorData.errors && errorData.errors.length > 0) {
+    message = `${message}，详情: ${errorData.errors.join('; ')}`;
+  }
+  
+  return message;
+}
+
 async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(`${API_BASE}${endpoint}`, {
     headers: {
       'Content-Type': 'application/json',
-      ...options.headers
+      ...options.headers,
     },
-    ...options
+    ...options,
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ error: 'Request failed' }));
-    throw new Error(error.error || 'Request failed');
-  }
-
-  if (response.status === 204) {
-    return undefined as T;
+    let errorMessage = `请求失败 (${response.status})`;
+    
+    try {
+      const errorData: ApiError = await response.json();
+      errorMessage = formatApiError(response.status, errorData);
+    } catch {
+      // 如果解析失败，使用默认错误消息
+    }
+    
+    throw new Error(errorMessage);
   }
 
   return response.json();
@@ -73,10 +114,9 @@ export const sourcesApi = {
     category?: string;
     status?: string;
     search?: string;
-    sortBy?: string;
-    sortOrder?: string;
   }) => {
     const searchParams = new URLSearchParams();
+    
     if (params) {
       Object.entries(params).forEach(([key, value]) => {
         if (value !== undefined && value !== '') {
@@ -129,21 +169,20 @@ export const sourcesApi = {
       body: JSON.stringify({ ids })
     }),
 
-  export: () =>
-    request<Source[]>('/sources/export'),
+  getStats: (id: string) =>
+    request<SourceStats>(`/sources/${id}/stats`),
 
-  import: (sources: Partial<Source>[]) =>
+  export: () =>
+    request<{ data: Source[] }>('/sources/export'),
+
+  import: (sources: Array<{
+    name: string;
+    type: string;
+    category?: string;
+    description?: string;
+  }>) =>
     request<{ success: number; failed: number; errors: string[] }>('/sources/import', {
       method: 'POST',
       body: JSON.stringify({ sources })
     }),
-
-  updateStats: (id: string, type: 'request' | 'success' | 'error', increment?: number) =>
-    request<SourceStats>(`/sources/${id}/stats`, {
-      method: 'POST',
-      body: JSON.stringify({ type, increment: increment || 1 })
-    }),
-
-  getReport: (id: string, period?: '1d' | '7d' | '30d') =>
-    request<SourceReport>(`/sources/${id}/report?period=${period || '7d'}`)
 };

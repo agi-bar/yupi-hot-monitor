@@ -57,16 +57,6 @@ export interface Hotspot {
   keyword: { id: string; text: string; category: string | null } | null;
 }
 
-export interface Notification {
-  id: string;
-  type: string;
-  title: string;
-  content: string;
-  isRead: boolean;
-  hotspotId: string | null;
-  createdAt: string;
-}
-
 export interface Stats {
   total: number;
   today: number;

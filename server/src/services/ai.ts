@@ -222,12 +222,12 @@ export async function analyzeContent(content: string, keyword: string, preMatchR
     return {
       isReal: Boolean(parsed.isReal),
       relevance: Math.min(100, Math.max(0, Number(parsed.relevance) || 0)),
-      relevanceReason: String(parsed.relevanceReason || '').slice(0, 200),
+      relevanceReason: String(parsed.relevanceReason || '').slice(0, 500),
       keywordMentioned: Boolean(parsed.keywordMentioned),
       importance: ['low', 'medium', 'high', 'urgent'].includes(parsed.importance) 
         ? parsed.importance 
         : 'low',
-      summary: String(parsed.summary || '').slice(0, 150)
+      summary: String(parsed.summary || '').slice(0, 500)
     };
   } catch (error) {
     console.error('AI analysis failed:', error);
@@ -237,7 +237,7 @@ export async function analyzeContent(content: string, keyword: string, preMatchR
       relevanceReason: 'AI 分析失败，使用默认分数',
       keywordMentioned: matchResult.matched,
       importance: 'low',
-      summary: content.slice(0, 50) + '...'
+      summary: content.slice(0, 200) + '...'
     };
   }
 }

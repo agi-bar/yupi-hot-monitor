@@ -54,9 +54,12 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ error: 'Keyword text is required' });
     }
 
+    // 规范化关键词：去除首尾空格并转换为小写，避免重复关键词（如"AI"和"ai"）
+    const normalizedText = text.trim().toLowerCase();
+
     const keyword = await prisma.keyword.create({
       data: {
-        text: text.trim(),
+        text: normalizedText,
         category: category?.trim() || null
       }
     });
@@ -76,10 +79,13 @@ router.put('/:id', async (req, res) => {
   try {
     const { text, category, isActive } = req.body;
 
+    // 规范化关键词：去除首尾空格并转换为小写
+    const normalizedText = text?.trim()?.toLowerCase() || null;
+
     const keyword = await prisma.keyword.update({
       where: { id: req.params.id },
       data: {
-        ...(text && { text: text.trim() }),
+        ...(normalizedText && { text: normalizedText }),
         ...(category !== undefined && { category: category?.trim() || null }),
         ...(isActive !== undefined && { isActive })
       }
@@ -89,6 +95,9 @@ router.put('/:id', async (req, res) => {
   } catch (error: any) {
     if (error.code === 'P2025') {
       return res.status(404).json({ error: 'Keyword not found' });
+    }
+    if (error.code === 'P2002') {
+      return res.status(409).json({ error: 'Keyword already exists' });
     }
     console.error('Error updating keyword:', error);
     res.status(500).json({ error: 'Failed to update keyword' });

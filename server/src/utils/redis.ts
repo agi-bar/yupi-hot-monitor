@@ -1,4 +1,4 @@
-import Redis from 'ioredis';
+import { Redis, RedisOptions } from 'ioredis';
 import { logInfo, logError } from './logger.js';
 
 let redisClient: Redis | null = null;
@@ -13,14 +13,14 @@ export async function initializeRedis(): Promise<void> {
   }
 
   try {
-    redisClient = new Redis(redisUrl, {
+    const options: RedisOptions = {
       maxRetriesPerRequest: 3,
-      retryDelayOnFailover: 100,
       enableReadyCheck: true,
       lazyConnect: true,
-    });
+    };
+    redisClient = new Redis(redisUrl, options);
 
-    redisClient.on('error', (err) => {
+    redisClient.on('error', (err: Error) => {
       logError('Redis', err, { message: 'Connection error' });
       isRedisAvailable = false;
     });
@@ -106,6 +106,13 @@ export async function closeRedis(): Promise<void> {
     isRedisAvailable = false;
     logInfo('Redis', 'Connection closed');
   }
+}
+
+export function getRedis(): NonNullable<Redis> {
+  if (!redisClient) {
+    throw new Error('Redis client not initialized');
+  }
+  return redisClient;
 }
 
 export { redisClient };

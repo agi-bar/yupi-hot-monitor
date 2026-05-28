@@ -16,6 +16,7 @@ describe('来源管理模块测试', () => {
         data: {
           name: 'Test Source',
           type: 'twitter',
+          dataSourceId: 'twitter',
           category: 'social',
           description: 'Test description',
           status: 'active',
@@ -45,6 +46,7 @@ describe('来源管理模块测试', () => {
         data: {
           name: 'Query Test Source',
           type: 'bing',
+          dataSourceId: 'bing',
           status: 'active'
         }
       });
@@ -64,6 +66,7 @@ describe('来源管理模块测试', () => {
         data: {
           name: 'Update Test Source',
           type: 'google',
+          dataSourceId: 'google',
           status: 'active'
         }
       });
@@ -87,6 +90,7 @@ describe('来源管理模块测试', () => {
         data: {
           name: 'Delete Test Source',
           type: 'weibo',
+          dataSourceId: 'weibo',
           status: 'active'
         }
       });
@@ -107,6 +111,7 @@ describe('来源管理模块测试', () => {
         data: {
           name: 'Unique Test Source',
           type: 'twitter',
+          dataSourceId: 'twitter_unique_1',
           status: 'active'
         }
       });
@@ -116,6 +121,7 @@ describe('来源管理模块测试', () => {
           data: {
             name: 'Unique Test Source',
             type: 'bing',
+            dataSourceId: 'bing_unique_1',
             status: 'active'
           }
         })
@@ -136,6 +142,7 @@ describe('来源管理模块测试', () => {
         data: {
           name: `Stats Test Source ${Date.now()}`,
           type: 'twitter',
+          dataSourceId: `twitter_stats_${Date.now()}`,
           status: 'active'
         }
       });
@@ -249,10 +256,10 @@ describe('来源管理模块测试', () => {
     it('按分类查询来源', async () => {
       const sources = await Promise.all([
         prisma.source.create({
-          data: { name: `Social ${Date.now()}`, type: 'twitter', category: 'social' }
+          data: { name: `Social ${Date.now()}`, type: 'twitter', dataSourceId: `twitter_${Date.now()}`, category: 'social' }
         }),
         prisma.source.create({
-          data: { name: `Search ${Date.now()}`, type: 'bing', category: 'search' }
+          data: { name: `Search ${Date.now()}`, type: 'bing', dataSourceId: `bing_${Date.now()}`, category: 'search' }
         })
       ]);
 
@@ -268,10 +275,10 @@ describe('来源管理模块测试', () => {
     it('按类型查询来源', async () => {
       const sources = await Promise.all([
         prisma.source.create({
-          data: { name: `Twitter ${Date.now()}`, type: 'twitter' }
+          data: { name: `Twitter ${Date.now()}`, type: 'twitter', dataSourceId: `twitter_type_${Date.now()}` }
         }),
         prisma.source.create({
-          data: { name: `Bing ${Date.now()}`, type: 'bing' }
+          data: { name: `Bing ${Date.now()}`, type: 'bing', dataSourceId: `bing_type_${Date.now()}` }
         })
       ]);
 
@@ -293,6 +300,7 @@ describe('来源管理模块测试', () => {
         data: {
           name: `Status Test ${Date.now()}`,
           type: 'twitter',
+          dataSourceId: `twitter_status_${Date.now()}`,
           status: 'active'
         }
       });
@@ -354,6 +362,7 @@ describe('来源管理模块测试', () => {
         data: {
           name: `Permission Test ${Date.now()}`,
           type: 'twitter',
+          dataSourceId: `twitter_perm_${Date.now()}`,
           isPublic: true,
           allowedRoles: JSON.stringify(['admin', 'editor'])
         }
@@ -430,7 +439,8 @@ describe('来源管理模块测试', () => {
       const source = await prisma.source.create({
         data: {
           name: `Hotspot Test ${Date.now()}`,
-          type: 'twitter'
+          type: 'twitter',
+          dataSourceId: `twitter_hotspot_${Date.now()}`
         }
       });
       testSourceId = source.id;
@@ -453,7 +463,8 @@ describe('来源管理模块测试', () => {
       const source = await prisma.source.create({
         data: {
           name: `Hotspots Query Test ${Date.now()}`,
-          type: 'twitter'
+          type: 'twitter',
+          dataSourceId: `twitter_query_${Date.now()}`
         }
       });
       testSourceId = source.id;
@@ -480,7 +491,8 @@ describe('来源管理模块测试', () => {
       const source = await prisma.source.create({
         data: {
           name: `Count Test ${Date.now()}`,
-          type: 'twitter'
+          type: 'twitter',
+          dataSourceId: `twitter_count_${Date.now()}`
         }
       });
       testSourceId = source.id;

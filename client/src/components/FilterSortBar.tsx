@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   ArrowUpDown, Filter, X, Clock, Flame, TrendingUp, Target,
@@ -7,28 +7,8 @@ import {
 import { cn } from '../lib/utils';
 import type { Keyword } from '../services/api';
 import { useSourceOptions } from '../hooks/useSourcesConfig';
-
-export interface FilterState {
-  source: string;
-  sourceRecordId: string;
-  importance: string;
-  keywordId: string;
-  timeRange: string;
-  isReal: string;
-  sortBy: string;
-  sortOrder: string;
-}
-
-const defaultFilterState: FilterState = {
-  source: '',
-  sourceRecordId: '',
-  importance: '',
-  keywordId: '',
-  timeRange: '',
-  isReal: '',
-  sortBy: 'createdAt',
-  sortOrder: 'desc',
-};
+import { defaultFilterState, type FilterState } from '../constants/filters';
+import { countActiveFilters, isActiveFilter } from '../utils/filterUtils';
 
 interface FilterSortBarProps {
   filters: FilterState;
@@ -64,6 +44,15 @@ const REAL_OPTIONS = [
   { value: '', label: '全部' },
   { value: 'true', label: '✅ 真实' },
   { value: 'false', label: '⚠️ 疑似虚假' },
+];
+
+const QUICK_FILTER_PRESETS: Array<{
+  label: string;
+  importance?: string;
+  timeRange?: string;
+}> = [
+  { label: '仅看紧急', importance: 'urgent' },
+  { label: '今天新发现', timeRange: 'today' },
 ];
 
 function Dropdown({ 
@@ -145,13 +134,11 @@ export default function FilterSortBar({ filters, onChange, keywords }: FilterSor
   const [showFilters, setShowFilters] = useState(true);
   const { options: dynamicSourceOptions } = useSourceOptions();
 
-  const activeFilterCount = [
-    filters.source,
-    filters.importance,
-    filters.keywordId,
-    filters.timeRange,
-    filters.isReal,
-  ].filter(v => v !== '').length;
+  const activeFilterCount = useMemo(() => 
+    countActiveFilters(filters), [filters]);
+
+  const hasActiveFilters = useMemo(() => 
+    isActiveFilter(filters), [filters]);
 
   const update = (key: keyof FilterState, value: string) => {
     onChange({ ...filters, [key]: value });
@@ -161,10 +148,18 @@ export default function FilterSortBar({ filters, onChange, keywords }: FilterSor
     onChange({ ...defaultFilterState, sortBy: filters.sortBy, sortOrder: filters.sortOrder });
   };
 
-  const keywordOptions = [
+  const applyQuickFilter = (preset: typeof QUICK_FILTER_PRESETS[number]) => {
+    if ('importance' in preset && preset.importance) {
+      update('importance', preset.importance);
+    } else if ('timeRange' in preset && preset.timeRange) {
+      update('timeRange', preset.timeRange);
+    }
+  };
+
+  const keywordOptions = useMemo(() => [
     { value: '', label: '全部关键词' },
     ...keywords.filter(k => k.isActive).map(k => ({ value: k.id, label: k.text })),
-  ];
+  ], [keywords]);
 
   return (
     <div className="space-y-3">
@@ -229,11 +224,27 @@ export default function FilterSortBar({ filters, onChange, keywords }: FilterSor
           </div>
         )}
 
+        {/* Quick Filter Presets */}
+        {QUICK_FILTER_PRESETS.map((preset, idx) => (
+          <button
+            key={idx}
+            onClick={() => applyQuickFilter(preset)}
+            className={cn(
+              "px-3 py-1.5 rounded-lg text-xs font-medium transition-all",
+              hasActiveFilters
+                ? "bg-white/5 text-slate-400 border border-white/10 hover:border-white/20"
+                : "bg-blue-500/10 text-blue-400 border border-blue-500/20 hover:bg-blue-500/20"
+            )}
+          >
+            {preset.label}
+          </button>
+        ))}
+
         {/* Filter Toggle */}
         <button
           onClick={() => setShowFilters(!showFilters)}
           className={cn(
-            "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ml-auto",
+            "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all",
             showFilters || activeFilterCount > 0
               ? "bg-blue-500/15 text-blue-400 border border-blue-500/30"
               : "bg-white/5 text-slate-400 border border-white/10 hover:border-white/20 hover:text-slate-300"

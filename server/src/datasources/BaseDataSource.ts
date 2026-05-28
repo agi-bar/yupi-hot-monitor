@@ -1,6 +1,6 @@
 import axios, { AxiosInstance, AxiosError } from 'axios';
 import type { 
-  BaseDataSource, 
+  IDataSource,
   DataSourceConfig, 
   DataSourceCredential, 
   DataSourceMetrics, 
@@ -10,7 +10,7 @@ import type {
   AuthProvider 
 } from '../types/datasource.js';
 
-export abstract class BaseDataSource implements BaseDataSource {
+export abstract class BaseDataSource implements IDataSource {
   abstract readonly id: string;
   abstract readonly name: string;
   abstract readonly icon: string;
@@ -47,7 +47,9 @@ export abstract class BaseDataSource implements BaseDataSource {
       successfulRequests: 0,
       failedRequests: 0,
       totalLatency: 0,
-      avgLatency: 0
+      avgLatency: 0,
+      quotaUsed: 0,
+      quotaLimit: 0
     };
     
     this.httpClient = axios.create({
@@ -224,10 +226,10 @@ export abstract class BaseDataSource implements BaseDataSource {
       }
     }
     
-    return result as SearchResult;
+    return result as unknown as SearchResult;
   }
   
   protected getNestedValue(obj: Record<string, unknown>, path: string): unknown {
-    return path.split('.').reduce((current, key) => (current as Record<string, unknown>)?.[key], obj);
+    return path.split('.').reduce<unknown>((current, key) => (current as Record<string, unknown>)?.[key], obj);
   }
 }

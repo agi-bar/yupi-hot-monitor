@@ -4,6 +4,21 @@ import type { SearchResult } from '../types.js';
 import { extractRealUrlFromBing, resolveRedirectUrl, extractRealUrlFromBaidu } from '../utils/urlResolver.js';
 import { parseSearchEngineDate } from '../utils/dateParser.js';
 
+// 清理文本内容中的多余空行和格式字符
+function cleanTextContent(text: string): string {
+  return text
+    // 替换多个连续空行为单个换行
+    .replace(/\n{3,}/g, '\n\n')
+    // 替换多个空格为单个空格
+    .replace(/\s{2,}/g, ' ')
+    // 清理行首行尾空格
+    .split('\n')
+    .map(line => line.trim())
+    .filter(line => line.length > 0)
+    .join('\n')
+    .trim();
+}
+
 // User Agent 列表
 const USER_AGENTS = [
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -68,16 +83,62 @@ export async function searchBing(query: string): Promise<SearchResult[]> {
 
       // 提取时间信息
       let publishedAt: Date | undefined;
+      
+      // 首先尝试从专门的时间元素中提取
       const dateElement = $(element).find('.news_dt, .b_att, [attrib="date"]').first();
       if (dateElement.length > 0) {
         const dateStr = dateElement.text().trim();
         publishedAt = parseSearchEngineDate(dateStr) || undefined;
       }
+      
+      // 如果没有找到，尝试从 snippet 中提取时间
+      if (!publishedAt && snippet) {
+        // 格式1: "Aug 10, 2025 · xxx"
+        const timeMatch = snippet.match(/^([A-Za-z]+\s+\d{1,2},?\s*\d{0,4})\s*[·|·]\s*/);
+        if (timeMatch) {
+          publishedAt = parseSearchEngineDate(timeMatch[1]) || undefined;
+        }
+        
+        // 格式2: "1 day ago · xxx" 或 "2 hours ago · xxx"
+        if (!publishedAt) {
+          const relativeTimeMatch = snippet.match(/^(\d+\s+(?:minutes?|hours?|days?|weeks?|months?|years?)\s+ago)\s*[·|·]\s*/i);
+          if (relativeTimeMatch) {
+            publishedAt = parseSearchEngineDate(relativeTimeMatch[1]) || undefined;
+          }
+        }
+        
+        // 格式3: "yesterday · xxx"
+        if (!publishedAt) {
+          const yesterdayMatch = snippet.match(/^(yesterday)\s*[·|·]\s*/i);
+          if (yesterdayMatch) {
+            publishedAt = parseSearchEngineDate(yesterdayMatch[1]) || undefined;
+          }
+        }
+      }
+
+      // 清理 snippet 中的时间前缀
+      let cleanContent = snippet;
+      if (snippet) {
+        // 移除各种时间前缀
+        const timePatterns = [
+          /^([A-Za-z]+\s+\d{1,2},?\s*\d{0,4})\s*[·|·]\s*/,
+          /^(\d+\s+(?:minutes?|hours?|days?|weeks?|months?|years?)\s+ago)\s*[·|·]\s*/i,
+          /^(yesterday)\s*[·|·]\s*/i
+        ];
+        
+        for (const pattern of timePatterns) {
+          const match = snippet.match(pattern);
+          if (match) {
+            cleanContent = snippet.substring(match[0].length).trim();
+            break;
+          }
+        }
+      }
 
       if (title && rawUrl && rawUrl.startsWith('http')) {
         results.push({
           title,
-          content: snippet,
+          content: cleanTextContent(cleanContent),
           url: rawUrl,
           source: 'bing',
           rawUrl,
@@ -179,7 +240,7 @@ export async function searchGoogle(query: string): Promise<SearchResult[]> {
       if (title && url && url.startsWith('http')) {
         results.push({
           title,
-          content: snippet,
+          content: cleanTextContent(snippet),
           url,
           source: 'google',
           publishedAt
@@ -243,7 +304,7 @@ export async function searchDuckDuckGo(query: string): Promise<SearchResult[]> {
       if (title && url && url.startsWith('http')) {
         results.push({
           title,
-          content: snippet,
+          content: cleanTextContent(snippet),
           url,
           source: 'duckduckgo',
           publishedAt

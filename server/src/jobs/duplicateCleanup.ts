@@ -1,9 +1,14 @@
 import { prisma } from '../db.js';
 import { logInfo, logError } from '../utils/logger.js';
-import { redisClient as redis } from '../utils/redis.js';
+import { getRedis } from '../utils/redis.js';
 import nodeCron from 'node-cron';
 
 const DEDUP_CACHE_PREFIX = 'hotspot:dedup:';
+
+// 删除热点缓存过期时间：30天（添加随机抖动±1天防止缓存雪崩）
+const DELETE_CACHE_BASE = 30 * 24 * 60 * 60;
+const DELETE_CACHE_JITTER = 24 * 60 * 60;
+const DELETE_CACHE_SECONDS = DELETE_CACHE_BASE + Math.floor(Math.random() * DELETE_CACHE_JITTER);
 
 interface CleanupResult {
   table: string;
@@ -94,58 +99,76 @@ class DuplicateCleanupJob {
     try {
       const timeThreshold = new Date(Date.now() - softDuplicateHours * 60 * 60 * 1000);
       
-      const duplicates = await prisma.$queryRaw<Array<{
-        title: string;
-        source: string;
-        count: bigint;
-      }>>`
-        SELECT title, source, COUNT(*) as count
-        FROM Hotspot
-        WHERE createdAt >= ${timeThreshold}
-        GROUP BY title, source
-        HAVING COUNT(*) > 1
+      // 使用窗口函数一次性找出所有需要删除的记录（优化N+1查询）
+      const toDelete = await prisma.$queryRaw<Array<{ id: string }>>`
+        WITH Ranked AS (
+          SELECT 
+            id,
+            title,
+            source,
+            createdAt,
+            ROW_NUMBER() OVER (PARTITION BY title, source ORDER BY createdAt ASC) as rn
+          FROM Hotspot
+          WHERE createdAt >= ${timeThreshold}
+        )
+        SELECT id FROM Ranked WHERE rn > 1
       `;
       
       let totalRemoved = 0;
       const details: Array<{title: string; source: string; removed: number}> = [];
       
-      for (const dup of duplicates) {
-        const oldest = await prisma.hotspot.findFirst({
-          where: {
-            title: dup.title,
-            source: dup.source
-          },
-          orderBy: { createdAt: 'asc' },
-          select: { id: true }
+      // 批量删除（优化多个单次删除）
+      if (toDelete.length > 0) {
+        const idsToDelete = toDelete.map(r => r.id);
+        
+        // 先查询要删除的记录信息（用于日志和缓存清理）
+        const hotspotsToDelete = await prisma.hotspot.findMany({
+          where: { id: { in: idsToDelete } },
+          select: { id: true, title: true, source: true }
         });
         
-        if (!oldest) continue;
-        
-        const removed = await prisma.hotspot.deleteMany({
-          where: {
-            title: dup.title,
-            source: dup.source,
-            NOT: { id: oldest.id }
-          }
+        // 批量删除
+        const result = await prisma.hotspot.deleteMany({
+          where: { id: { in: idsToDelete } }
         });
         
-        // 清理去重缓存（系统自动去重，不需要永久过滤）
+        // 清理软去重缓存（批量操作优化）
         try {
-          const cacheKey = `${DEDUP_CACHE_PREFIX}${dup.source}:${dup.title}`;
-          await redis.del(cacheKey);
+          const pipeline = getRedis().pipeline();
+          const deletedSet = new Set(idsToDelete);
+          
+          for (const hotspot of hotspotsToDelete) {
+            if (deletedSet.has(hotspot.id)) {
+              const cacheKey = `${DEDUP_CACHE_PREFIX}${hotspot.source}:${hotspot.title}`;
+              pipeline.del(cacheKey);
+            }
+          }
+          
+          await pipeline.exec();
+          logInfo('DuplicateCleanupJob', 
+            `Cleared ${hotspotsToDelete.length} soft dedup cache entries`);
         } catch (cacheError) {
-          logInfo('DuplicateCleanupJob', `Failed to clear cache for: ${dup.source}:${dup.title.slice(0, 30)}...`);
+          logInfo('DuplicateCleanupJob', `Failed to clear cache for soft duplicates`);
         }
         
-        totalRemoved += removed.count;
-        details.push({ 
-          title: dup.title.substring(0, 50), 
-          source: dup.source, 
-          removed: removed.count 
-        });
+        totalRemoved = result.count;
+        
+        // 按 source 分组统计（用于日志）
+        const bySource = new Map<string, number>();
+        for (const hotspot of hotspotsToDelete) {
+          bySource.set(hotspot.source, (bySource.get(hotspot.source) || 0) + 1);
+        }
+        
+        for (const [source, count] of bySource.entries()) {
+          details.push({
+            title: `${count} items`,
+            source,
+            removed: count
+          });
+        }
         
         logInfo('DuplicateCleanupJob', 
-          `Cleaned up ${removed.count} soft duplicate hotspots: "${dup.title.substring(0, 30)}..."`);
+          `Cleaned up ${totalRemoved} soft duplicate hotspots using window function (optimized)`);
       }
       
       return {
@@ -181,17 +204,19 @@ class DuplicateCleanupJob {
         }
       });
       
-      // ✅ 设置永久缓存（30天），确保清理的旧数据永远不会再被抓取
+      // ✅ 设置永久缓存（30天±随机），确保清理的旧数据永远不会再被抓取
       if (hotspotsToDelete.length > 0) {
         try {
-          const pipeline = redis.pipeline();
+          const pipeline = getRedis().pipeline();
           for (const hotspot of hotspotsToDelete) {
             const cacheKey = `${DEDUP_CACHE_PREFIX}${hotspot.source}:${hotspot.title}`;
-            pipeline.setEx(cacheKey, 30 * 24 * 60 * 60, 'deleted');
+            // 使用带随机抖动的过期时间，防止缓存雪崩
+            const cacheTTL = DELETE_CACHE_BASE + Math.floor(Math.random() * DELETE_CACHE_JITTER);
+            pipeline.setex(cacheKey, cacheTTL, 'deleted');
           }
           await pipeline.exec();
           logInfo('DuplicateCleanupJob', 
-            `Set ${hotspotsToDelete.length} permanent dedup cache entries (30 days) for old hotspots`);
+            `Set ${hotspotsToDelete.length} permanent dedup cache entries (${(DELETE_CACHE_BASE/86400).toFixed(0)}±${(DELETE_CACHE_JITTER/86400).toFixed(0)} days) for old hotspots`);
         } catch (cacheError) {
           logInfo('DuplicateCleanupJob', `Failed to set permanent cache for old hotspots`);
         }

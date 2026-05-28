@@ -103,7 +103,7 @@ model Notification {
   title     String
   content   String
   isRead    Boolean  @default(false)
-  hotspotId String?
+  hotspotId String?  @unique  // 一个热点最多一条通知
   createdAt DateTime @default(now())
 
   @@index([isRead, createdAt])

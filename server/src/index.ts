@@ -15,6 +15,7 @@ import datasourcesRouter from './routes/datasources.js';
 import sourcesConfigRouter from './routes/sourcesConfig.js';
 import { runHotspotCheck } from './jobs/hotspotChecker.js';
 import { duplicateCleanupJob } from './jobs/duplicateCleanup.js';
+import { notificationCleanupJob } from './jobs/notificationCleanup.js';
 import { dataSourceManager } from './datasources/DataSourceManager.js';
 import { rateLimit } from './middleware/rateLimit.js';
 import { initializeRedis, closeRedis } from './utils/redis.js';
@@ -84,6 +85,29 @@ app.post('/api/cleanup-duplicates', async (req, res) => {
   }
 });
 
+// Manual trigger for notification cleanup
+app.post('/api/cleanup-notifications', async (req, res) => {
+  try {
+    const result = await notificationCleanupJob.cleanupExpired();
+    res.json({ 
+      message: 'Notification cleanup completed',
+      result 
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to cleanup notifications' });
+  }
+});
+
+// Get notification cleanup stats
+app.get('/api/notification-stats', async (req, res) => {
+  try {
+    const stats = await notificationCleanupJob.getStats();
+    res.json(stats);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to get notification stats' });
+  }
+});
+
 // Get data quality report
 app.get('/api/data-quality', async (req, res) => {
   try {
@@ -134,6 +158,17 @@ cron.schedule('0 3 * * 0', async () => {
   }
 });
 
+// Scheduled job: Run notification cleanup every day at 2 AM
+cron.schedule('0 2 * * *', async () => {
+  console.log('🗑️  Running scheduled notification cleanup...');
+  try {
+    const result = await notificationCleanupJob.cleanupExpired();
+    console.log('✅ Scheduled notification cleanup completed:', result);
+  } catch (error) {
+    console.error('❌ Scheduled notification cleanup failed:', error);
+  }
+});
+
 // Export for use in other modules
 export { io };
 
@@ -149,14 +184,15 @@ async function startServer() {
     console.log('✅ Source event subscriber initialized');
 
     httpServer.listen(PORT, () => {
-      console.log(`
+    console.log(`
   🔥 热点监控服务启动成功!
   📡 Server running on http://localhost:${PORT}
   🔌 WebSocket ready
   ⏰ Hotspot check scheduled every 30 minutes
   🧹 Duplicate cleanup scheduled every Sunday at 3 AM
-      `);
-    });
+  🗑️  Notification cleanup scheduled every day at 2 AM
+`);
+  });
   } catch (error) {
     console.error('❌ Failed to start server:', error);
     process.exit(1);

@@ -15,8 +15,6 @@ export class BaiduDataSource extends BaseDataSource {
   readonly name = '百度搜索';
   readonly icon = '🔍';
   
-  private requestCount = 0;
-  private lastResetTime = Date.now();
   private readonly MIN_INTERVAL = 3000;
   
   constructor() {

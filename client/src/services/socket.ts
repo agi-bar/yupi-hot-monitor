@@ -1,6 +1,39 @@
 import { io, Socket } from 'socket.io-client';
+import type { NotificationPayload } from '../types/notification';
 
 let socket: Socket | null = null;
+const MAX_RECONNECT_ATTEMPTS = 10;
+const BASE_RECONNECT_DELAY = 1000;
+
+export type ConnectionState = 'connected' | 'disconnected' | 'reconnecting';
+
+interface SocketState {
+  status: ConnectionState;
+  attempts: number;
+  lastConnected: Date | null;
+}
+
+const socketState: SocketState = {
+  status: 'disconnected',
+  attempts: 0,
+  lastConnected: null
+};
+
+const connectionListeners: Set<(state: SocketState) => void> = new Set();
+
+function notifyListeners() {
+  connectionListeners.forEach(listener => listener({ ...socketState }));
+}
+
+export function onConnectionChange(callback: (state: SocketState) => void): () => void {
+  connectionListeners.add(callback);
+  callback({ ...socketState });
+  return () => connectionListeners.delete(callback);
+}
+
+export function getSocketState(): SocketState {
+  return { ...socketState };
+}
 
 export function getSocket(): Socket {
   if (!socket) {
@@ -10,29 +43,60 @@ export function getSocket(): Socket {
       path: '/socket.io',
       transports: ['websocket', 'polling'],
       reconnection: true,
-      reconnectionDelay: 1000,
-      reconnectionDelayMax: 5000,
-      reconnectionAttempts: 5
+      reconnectionDelay: BASE_RECONNECT_DELAY,
+      reconnectionDelayMax: 10000,
+      reconnectionAttempts: MAX_RECONNECT_ATTEMPTS,
+      timeout: 20000
     });
 
     socket.on('connect', () => {
       console.log('🔌 Socket connected:', socket?.id);
+      socketState.status = 'connected';
+      socketState.lastConnected = new Date();
+      socketState.attempts = 0;
+      notifyListeners();
     });
 
-    socket.on('disconnect', () => {
-      console.log('🔌 Socket disconnected');
+    socket.on('disconnect', (reason) => {
+      console.log('🔌 Socket disconnected:', reason);
+      socketState.status = 'disconnected';
+      notifyListeners();
     });
 
     socket.on('connect_error', (error) => {
       console.error('🔌 Socket connection error:', error.message);
+      socketState.status = 'reconnecting';
+      socketState.attempts += 1;
+      notifyListeners();
+      
+      if (socketState.attempts >= MAX_RECONNECT_ATTEMPTS) {
+        console.error('🔌 Max reconnection attempts reached');
+      }
     });
 
     socket.on('reconnect', (attemptNumber) => {
       console.log('🔌 Socket reconnected after', attemptNumber, 'attempts');
+      socketState.status = 'connected';
+      socketState.lastConnected = new Date();
+      socketState.attempts = 0;
+      notifyListeners();
+    });
+
+    socket.on('reconnect_attempt', (attemptNumber) => {
+      console.log('🔌 Reconnection attempt:', attemptNumber);
+      socketState.status = 'reconnecting';
+      socketState.attempts = attemptNumber;
+      notifyListeners();
     });
 
     socket.on('reconnect_error', (error) => {
       console.warn('🔌 Socket reconnection error:', error.message);
+    });
+
+    socket.on('reconnect_failed', () => {
+      console.error('🔌 Socket reconnection failed after max attempts');
+      socketState.status = 'disconnected';
+      notifyListeners();
     });
   }
 
@@ -55,17 +119,35 @@ export interface HotspotEvent {
   content: string;
   url: string;
   source: string;
-  importance: string;
+  sourceId: string | null;
+  sourceRecordId: string | null;
+  sourceRecord: {
+    id: string;
+    name: string;
+    type: string;
+    category: string | null;
+  } | null;
+  isReal: boolean;
+  relevance: number;
+  relevanceReason: string | null;
+  keywordMentioned: boolean | null;
+  importance: 'low' | 'medium' | 'high' | 'urgent';
   summary: string | null;
-  keyword?: { text: string } | null;
-}
-
-export interface NotificationEvent {
-  type: string;
-  title: string;
-  content: string;
-  hotspotId?: string;
-  importance?: string;
+  viewCount: number | null;
+  likeCount: number | null;
+  retweetCount: number | null;
+  replyCount: number | null;
+  commentCount: number | null;
+  quoteCount: number | null;
+  danmakuCount: number | null;
+  authorName: string | null;
+  authorUsername: string | null;
+  authorAvatar: string | null;
+  authorFollowers: number | null;
+  authorVerified: boolean | null;
+  publishedAt: string | null;
+  createdAt: string;
+  keyword: { id: string; text: string; category: string | null } | null;
 }
 
 export function onNewHotspot(callback: (hotspot: HotspotEvent) => void): () => void {
@@ -74,15 +156,29 @@ export function onNewHotspot(callback: (hotspot: HotspotEvent) => void): () => v
   return () => s.off('hotspot:new', callback);
 }
 
-export function onNotification(callback: (notification: NotificationEvent) => void): () => void {
+export function onNotification(callback: (notification: NotificationPayload) => void): () => void {
   const s = getSocket();
   s.on('notification', callback);
   return () => s.off('notification', callback);
+}
+
+export function reconnectSocket(): void {
+  if (socket) {
+    socket.disconnect();
+    socket = null;
+    socketState.status = 'reconnecting';
+    socketState.attempts = 0;
+    notifyListeners();
+    getSocket();
+  }
 }
 
 export function disconnectSocket(): void {
   if (socket) {
     socket.disconnect();
     socket = null;
+    socketState.status = 'disconnected';
+    socketState.attempts = 0;
+    notifyListeners();
   }
 }

@@ -255,3 +255,128 @@ body {
   outline: 2px solid #3b82f6;
   outline-offset: 2px;
 }
+
+/* ===== Notification Panel Light Mode ===== */
+:root[data-theme="light"] .notification-panel {
+  background: linear-gradient(to bottom, #ffffff, rgba(241, 245, 249, 0.95));
+  border-color: rgba(59, 130, 246, 0.15);
+}
+
+:root[data-theme="light"] .notification-panel-border {
+  border-color: rgba(59, 130, 246, 0.1);
+}
+
+:root[data-theme="light"] .notification-item {
+  background-color: transparent;
+}
+
+:root[data-theme="light"] .notification-item:hover {
+  background-color: rgba(59, 130, 246, 0.03);
+}
+
+:root[data-theme="light"] .notification-item-unread {
+  background-color: rgba(59, 130, 246, 0.03);
+}
+
+:root[data-theme="light"] .notification-icon-bg {
+  background: linear-gradient(to bottom right, rgba(59, 130, 246, 0.1), rgba(139, 92, 246, 0.1));
+  border: 1px solid rgba(59, 130, 246, 0.2);
+}
+
+:root[data-theme="light"] .notification-icon-read {
+  background-color: rgba(241, 245, 249, 0.8);
+}
+
+:root[data-theme="light"] .notification-unread-dot {
+  background: linear-gradient(to right, #3b82f6, #8b5cf6);
+}
+
+:root[data-theme="light"] .notification-loading-bg {
+  background: linear-gradient(to right, rgba(59, 130, 246, 0.05), rgba(139, 92, 246, 0.05));
+}
+
+:root[data-theme="light"] .notification-text-title {
+  color: #1e293b;
+}
+
+:root[data-theme="light"] .notification-text-content {
+  color: #64748b;
+}
+
+:root[data-theme="light"] .notification-text-time {
+  color: #94a3b8;
+}
+
+:root[data-theme="light"] .notification-filter-bg {
+  background-color: rgba(241, 245, 249, 0.5);
+}
+
+:root[data-theme="light"] .notification-empty-icon {
+  background: linear-gradient(to bottom right, rgba(241, 245, 249, 0.8), rgba(226, 232, 240, 0.8));
+}
+
+:root[data-theme="light"] .notification-hover-effect {
+  background: linear-gradient(to right, rgba(59, 130, 246, 0.02), transparent);
+}
+
+:root[data-theme="light"] .notification-button-mark-read {
+  background-color: rgba(59, 130, 246, 0.08);
+  border: 1px solid rgba(59, 130, 246, 0.15);
+}
+
+:root[data-theme="light"] .notification-button-clear {
+  background-color: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.15);
+}
+
+:root[data-theme="light"] .notification-badge {
+  background: linear-gradient(to right, #ef4444, #ec4899);
+}
+
+/* Light mode filter tabs */
+:root[data-theme="light"] .notification-filter-bg {
+  background-color: rgba(241, 245, 249, 0.8);
+  border-color: rgba(59, 130, 246, 0.1);
+}
+
+/* Light mode empty icon */
+:root[data-theme="light"] .notification-empty-icon {
+  background: linear-gradient(to bottom right, rgba(241, 245, 249, 0.9), rgba(226, 232, 240, 0.9));
+}
+
+/* Light mode text colors */
+:root[data-theme="light"] .notification-text-primary {
+  color: #1e293b;
+}
+
+:root[data-theme="light"] .notification-text-secondary {
+  color: #64748b;
+}
+
+:root[data-theme="light"] .notification-text-muted {
+  color: #94a3b8;
+}
+
+/* Light mode button hover */
+:root[data-theme="light"] .notification-button-hover:hover {
+  background-color: rgba(59, 130, 246, 0.05);
+}
+
+/* Light mode border */
+:root[data-theme="light"] .notification-divider {
+  border-color: rgba(59, 130, 246, 0.08);
+}
+
+/* Notification Panel scrollbar for light mode */
+:root[data-theme="light"] .notification-scroll::-webkit-scrollbar-thumb {
+  background: rgba(59, 130, 246, 0.2);
+}
+
+:root[data-theme="light"] .notification-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(59, 130, 246, 0.4);
+}
+
+/* Light mode scrollbar track */
+:root[data-theme="light"] .notification-scroll::-webkit-scrollbar-track {
+  background: rgba(241, 245, 249, 0.5);
+}
