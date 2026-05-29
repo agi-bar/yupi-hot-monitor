@@ -107,6 +107,8 @@ export default function SourcesManager({ onSourceSelect }: SourcesManagerProps) 
   }, []);
 
   const handleDelete = useCallback(async (id: string) => {
+    const previousSources = sources;
+    
     setConfirmDialog({
       isOpen: true,
       title: '删除来源',
@@ -114,22 +116,19 @@ export default function SourcesManager({ onSourceSelect }: SourcesManagerProps) 
       onConfirm: async () => {
         setConfirmDialog(prev => ({ ...prev, isLoading: true }));
         try {
-          // 调用 API 删除
           await sourcesApi.delete(id);
-          
-          // 重新加载数据
-          await loadSources();
-          
+          setSources(prev => prev.filter(s => s.id !== id));
           setConfirmDialog(prev => ({ ...prev, isOpen: false, isLoading: false }));
           showToast('来源已删除', 'success');
         } catch (error) {
+          setSources(previousSources);
           setConfirmDialog(prev => ({ ...prev, isLoading: false }));
           console.error('删除来源失败:', error);
           showToast('删除失败', 'error');
         }
       }
     });
-  }, [loadSources, showToast]);
+  }, [showToast]);
 
   const handleExport = useCallback(async () => {
     setIsExporting(true);
@@ -212,16 +211,19 @@ export default function SourcesManager({ onSourceSelect }: SourcesManagerProps) 
       return;
     }
 
+    const idsToDelete = new Set(selectedIds);
+    const count = idsToDelete.size;
+
     setConfirmDialog({
       isOpen: true,
       title: '批量删除来源',
-      message: `确定要删除选中的 ${selectedIds.size} 个来源吗？此操作无法撤销。`,
+      message: `确定要删除选中的 ${count} 个来源吗？此操作无法撤销。`,
       onConfirm: async () => {
         setConfirmDialog(prev => ({ ...prev, isLoading: true }));
         try {
-          await sourcesApi.batchDelete(Array.from(selectedIds));
+          await sourcesApi.batchDelete(Array.from(idsToDelete));
           setSelectedIds(new Set());
-          await loadSources();
+          setSources(prev => prev.filter(s => !idsToDelete.has(s.id)));
           setConfirmDialog(prev => ({ ...prev, isOpen: false, isLoading: false }));
           showToast('批量删除成功', 'success');
         } catch {
@@ -230,7 +232,7 @@ export default function SourcesManager({ onSourceSelect }: SourcesManagerProps) 
         }
       }
     });
-  }, [selectedIds, loadSources, showToast]);
+  }, [selectedIds, showToast]);
 
   const statusConfig = useMemo(() => ({
     active: { label: '启用', className: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20' },

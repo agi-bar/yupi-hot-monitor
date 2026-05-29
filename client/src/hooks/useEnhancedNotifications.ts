@@ -49,6 +49,11 @@ export function useEnhancedNotifications(
   });
   const pendingNotifications = useRef<Notification[]>([]);
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const notificationsRef = useRef<Notification[]>([]);
+
+  useEffect(() => {
+    notificationsRef.current = notifications;
+  }, [notifications]);
 
   const loadNotifications = useCallback(async () => {
     setIsLoading(true);
@@ -126,9 +131,6 @@ export function useEnhancedNotifications(
   }, [currentPage, totalPages, isLoading, pageSize]);
 
   const markAsRead = useCallback(async (id: string) => {
-    const previousNotifications = notifications;
-    const previousUnreadCount = unreadCount;
-
     setNotifications(prev =>
       prev.map(n => n.id === id ? { ...n, isRead: true } : n)
     );
@@ -137,33 +139,29 @@ export function useEnhancedNotifications(
     try {
       await notificationsApi.markAsRead(id);
     } catch (err) {
-      setNotifications(previousNotifications);
-      setUnreadCount(previousUnreadCount);
+      setNotifications(prev =>
+        prev.map(n => n.id === id ? { ...n, isRead: false } : n)
+      );
+      setUnreadCount(prev => prev + 1);
       console.error('Failed to mark notification as read:', err);
     }
-  }, [notifications, unreadCount]);
+  }, []);
 
   const markAllAsRead = useCallback(async () => {
-    const previousNotifications = notifications;
-    const previousUnreadCount = unreadCount;
-
     setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
     setUnreadCount(0);
 
     try {
       await notificationsApi.markAllAsRead();
     } catch (err) {
-      setNotifications(previousNotifications);
-      setUnreadCount(previousUnreadCount);
       console.error('Failed to mark all as read:', err);
     }
-  }, [notifications, unreadCount]);
+  }, []);
 
   const deleteNotification = useCallback(async (id: string) => {
-    const previousNotifications = notifications;
-    const notification = notifications.find(n => n.id === id);
+    const notification = notificationsRef.current.find(n => n.id === id);
     const previousUnreadCount = unreadCount;
-
+    
     setNotifications(prev => prev.filter(n => n.id !== id));
     if (notification && !notification.isRead) {
       setUnreadCount(prev => Math.max(0, prev - 1));
@@ -172,11 +170,14 @@ export function useEnhancedNotifications(
     try {
       await notificationsApi.delete(id);
     } catch (err) {
-      setNotifications(previousNotifications);
-      setUnreadCount(previousUnreadCount);
+      // API 调用失败时回滚本地状态
+      setNotifications(notificationsRef.current);
+      if (notification && !notification.isRead) {
+        setUnreadCount(previousUnreadCount);
+      }
       console.error('Failed to delete notification:', err);
     }
-  }, [notifications, unreadCount]);
+  }, []);
 
   const clearAll = useCallback(async () => {
     const previousNotifications = notifications;

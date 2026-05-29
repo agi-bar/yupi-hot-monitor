@@ -19,7 +19,9 @@ const socketState: SocketState = {
   lastConnected: null
 };
 
+let subscribedKeywords: string[] = [];
 const connectionListeners: Set<(state: SocketState) => void> = new Set();
+const reconnectListeners: Set<() => void> = new Set();
 
 function notifyListeners() {
   connectionListeners.forEach(listener => listener({ ...socketState }));
@@ -80,6 +82,13 @@ export function getSocket(): Socket {
       socketState.lastConnected = new Date();
       socketState.attempts = 0;
       notifyListeners();
+
+      if (subscribedKeywords.length > 0) {
+        console.log('🔌 Re-subscribing to keywords after reconnection:', subscribedKeywords);
+        socket?.emit('subscribe', subscribedKeywords);
+      }
+
+      reconnectListeners.forEach(callback => callback());
     });
 
     socket.on('reconnect_attempt', (attemptNumber) => {
@@ -106,11 +115,22 @@ export function getSocket(): Socket {
 export function subscribeToKeywords(keywords: string[]): void {
   const s = getSocket();
   s.emit('subscribe', keywords);
+  subscribedKeywords = [...new Set([...subscribedKeywords, ...keywords])];
 }
 
 export function unsubscribeFromKeywords(keywords: string[]): void {
   const s = getSocket();
   s.emit('unsubscribe', keywords);
+  subscribedKeywords = subscribedKeywords.filter(k => !keywords.includes(k));
+}
+
+export function onReconnect(callback: () => void): () => void {
+  reconnectListeners.add(callback);
+  return () => reconnectListeners.delete(callback);
+}
+
+export function clearSubscribedKeywords(): void {
+  subscribedKeywords = [];
 }
 
 export interface HotspotEvent {

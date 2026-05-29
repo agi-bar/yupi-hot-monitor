@@ -42,20 +42,24 @@ export default function NotificationPanel({
 }: NotificationPanelProps) {
   const [activeFilter, setActiveFilter] = useState<NotificationFilterType>('all');
 
+  const validNotifications = useMemo(() => 
+    notifications.filter(n => n && n.id), 
+  [notifications]);
+
   const filteredNotifications = useMemo(() => {
-    if (activeFilter === 'unread') return notifications.filter(n => !n.isRead);
-    if (activeFilter === 'read') return notifications.filter(n => n.isRead);
-    return notifications;
-  }, [notifications, activeFilter]);
+    if (activeFilter === 'unread') return validNotifications.filter(n => !n.isRead);
+    if (activeFilter === 'read') return validNotifications.filter(n => n.isRead);
+    return validNotifications;
+  }, [validNotifications, activeFilter]);
 
   const filterCounts = useMemo(() => {
-    const unread = notifications.filter(n => !n.isRead).length;
+    const unread = validNotifications.filter(n => !n.isRead).length;
     return {
-      all: notifications.length,
+      all: validNotifications.length,
       unread,
-      read: notifications.length - unread
+      read: validNotifications.length - unread
     };
-  }, [notifications]);
+  }, [validNotifications]);
 
   const handleFilterChange = (filter: NotificationFilterType) => {
     setActiveFilter(filter);
@@ -242,11 +246,6 @@ export default function NotificationPanel({
         ) : (
           <div className="divide-y divide-white/[0.03] notification-divider">
             {filteredNotifications.map((n, index) => {
-              if (!n || !n.id) {
-                console.warn('Invalid notification item:', n);
-                return null;
-              }
-              
               return (
                 <motion.div
                   key={n.id}

@@ -36,7 +36,16 @@ import NotificationPanel from './components/NotificationPanel';
 import { useTheme } from './hooks/useTheme';
 import { getSourceLabel, getSourceIcon } from './services/sourcesConfig';
 import { useFilteredHotspots } from './hooks/useFilteredHotspots';
-// TextGenerateEffect available for future use
+
+/** 各平台的归一化因子（基于典型数值范围调整） */
+const SOURCE_NORMALIZATION: Record<string, number> = {
+  'twitter': 1.0,
+  'douyin': 0.5,
+  'xiaohongshu': 0.8,
+  'baidu': 1.2,
+  'bilibili': 0.7,
+  'default': 1.0
+};
 
 /** 计算热度综合指标（归一化 0-100） */
 function calcHeatScore(h: Hotspot): number {
@@ -46,9 +55,11 @@ function calcHeatScore(h: Hotspot): number {
   const comments = h.commentCount ?? 0;
   const quotes = h.quoteCount ?? 0;
   const views = h.viewCount ?? 0;
-  // 加权公式：转发最重、其次点赞、然后评论/回复
-  const raw = likes * 2 + retweets * 3 + replies * 1.5 + comments * 1.5 + quotes * 2 + views / 100;
-  // log 压缩到 0-100
+
+  const normalizationFactor = SOURCE_NORMALIZATION[h.source] ?? SOURCE_NORMALIZATION['default'];
+
+  const raw = (likes * 2 + retweets * 3 + replies * 1.5 + comments * 1.5 + quotes * 2 + views / 100) * normalizationFactor;
+
   if (raw <= 0) return 0;
   return Math.min(100, Math.round(Math.log10(raw + 1) * 25));
 }
@@ -314,35 +325,21 @@ function App() {
       message: '确定要删除这条热点数据吗？此操作无法撤销。',
       onConfirm: async () => {
         setConfirmDialog(prev => ({ ...prev, isLoading: true }));
-        
-        const currentHotspots = hotspots;
-        const pageToUse = currentPage;
-        const totalPagesCount = totalPages;
-        
-        // 如果是最后一页且只有一条数据，删除后需要回到上一页
-        const shouldGoToPrevPage = pageToUse === totalPagesCount && 
-                                    currentHotspots.length === 1 && 
-                                    pageToUse > 1;
-        
+
         try {
-          // 先调用 API 删除
-          const deletePromise = hotspotsApi.delete(id);
-          
-          // 更新 URL（如果需要）
-          if (shouldGoToPrevPage) {
-            const newPage = pageToUse - 1;
-            const url = new URL(window.location.href);
-            url.searchParams.set('page', newPage.toString());
-            window.history.replaceState({}, '', url.toString());
+          await hotspotsApi.delete(id);
+
+          const newHotspots = hotspots.filter(h => h.id !== id);
+
+          if (newHotspots.length === 0 && currentPage > 1) {
+            const newPage = currentPage - 1;
             setCurrentPage(newPage);
+            loadData(dashboardFilters, newPage, pageSize);
+          } else {
+            setHotspots(newHotspots);
+            loadData(dashboardFilters, currentPage, pageSize);
           }
-          
-          // 等待删除完成
-          await deletePromise;
-          
-          // 删除成功后重新加载数据
-          loadData(dashboardFilters, currentPage, pageSize);
-          
+
           setConfirmDialog(prev => ({ ...prev, isOpen: false, isLoading: false }));
           showToast('热点已删除', 'success');
         } catch (error) {
@@ -357,36 +354,37 @@ function App() {
   // 批量删除热点
   const handleBatchDeleteHotspots = async () => {
     if (selectedHotspots.size === 0) return;
-    
+
     const selectedIds = Array.from(selectedHotspots);
     const count = selectedIds.length;
-    const deletedCount = count;
-    
+    const previousSelectedHotspots = new Set(selectedHotspots);
+
     setConfirmDialog({
       isOpen: true,
       title: '批量删除热点',
       message: `确定要删除选中的 ${count} 条热点数据吗？此操作无法撤销。`,
       onConfirm: async () => {
         setConfirmDialog(prev => ({ ...prev, isLoading: true }));
-        
+
         try {
           await hotspotsApi.batchDelete(selectedIds);
           setSelectedHotspots(new Set());
-          
-          // 计算删除后的新总页数
-          const remainingCount = total - deletedCount;
+
+          const remainingCount = total - count;
           const newTotalPages = Math.max(1, Math.ceil(remainingCount / pageSize));
           const adjustedPage = Math.min(currentPage, newTotalPages);
-          
-          // 如果页码超出范围，调整到有效范围
+
           if (adjustedPage !== currentPage) {
             setCurrentPage(adjustedPage);
+            loadData(dashboardFilters, adjustedPage, pageSize);
+          } else {
+            loadData(dashboardFilters, currentPage, pageSize);
           }
 
-          loadData(dashboardFilters, adjustedPage !== currentPage ? adjustedPage : currentPage, pageSize);
           setConfirmDialog(prev => ({ ...prev, isOpen: false, isLoading: false }));
           showToast(`${count} 条热点已删除`, 'success');
         } catch (error) {
+          setSelectedHotspots(previousSelectedHotspots);
           setConfirmDialog(prev => ({ ...prev, isLoading: false }));
           console.error('批量删除热点失败:', error);
           showToast('批量删除失败', 'error');
@@ -488,23 +486,32 @@ function App() {
 
   // 删除单条通知
   const handleDeleteNotification = async (id: string) => {
+    const previousNotifications = notifications;
+    const notification = notifications.find(n => n.id === id);
+    const previousUnreadCount = unreadCount;
+    
     setConfirmDialog({
       isOpen: true,
       title: '删除通知',
       message: '确定要删除这条通知吗？',
       onConfirm: async () => {
         setConfirmDialog(prev => ({ ...prev, isLoading: true }));
-        const previousNotifications = notifications;
-        const notification = notifications.find(n => n.id === id);
+
         try {
           await notificationsApi.delete(id);
-          setNotifications(prev => prev.filter(n => n.id !== id));
-          if (notification && !notification.isRead) {
-            setUnreadCount(prev => Math.max(0, prev - 1));
-          }
+          setNotifications(prev => {
+            const deleted = prev.find(n => n.id === id);
+            if (deleted && !deleted.isRead) {
+              setUnreadCount(count => Math.max(0, count - 1));
+            }
+            return prev.filter(n => n.id !== id);
+          });
           setConfirmDialog(prev => ({ ...prev, isOpen: false, isLoading: false }));
         } catch (error) {
           setNotifications(previousNotifications);
+          if (notification && !notification.isRead) {
+            setUnreadCount(previousUnreadCount);
+          }
           setConfirmDialog(prev => ({ ...prev, isLoading: false }));
           console.error('删除通知失败:', error);
         }
@@ -514,14 +521,16 @@ function App() {
 
   // 清空所有通知
   const handleClearAllNotifications = async () => {
+    const previousNotifications = notifications;
+    const previousUnreadCount = unreadCount;
+    
     setConfirmDialog({
       isOpen: true,
       title: '清空通知',
       message: '确定要清空所有通知吗？此操作无法撤销。',
       onConfirm: async () => {
         setConfirmDialog(prev => ({ ...prev, isLoading: true }));
-        const previousNotifications = notifications;
-        const previousUnreadCount = unreadCount;
+
         try {
           await notificationsApi.clear();
           setNotifications([]);
