@@ -80,7 +80,8 @@ export async function searchSogou(query: string): Promise<SearchResult[]> {
           title,
           content: snippet || title,
           url,
-          source: 'sogou' as const
+          source: 'sogou' as const,
+          publishedAt: new Date()
         });
       }
     });
@@ -379,7 +380,8 @@ export async function searchWeibo(query: string): Promise<SearchResult[]> {
           content: `微博热搜话题「${topicName}」，热度 ${item.num?.toLocaleString() || '未知'}`,
           url,
           source: 'weibo' as const,
-          viewCount: item.num || 0
+          viewCount: item.num || 0,
+          publishedAt: new Date()
         });
       }
     }

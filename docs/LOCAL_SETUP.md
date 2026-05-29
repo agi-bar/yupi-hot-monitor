@@ -75,7 +75,7 @@ DATABASE_URL="file:./dev.db"
 
 # 服务器配置（无需修改）
 PORT=3001
-CLIENT_URL=http://localhost:5173
+CLIENT_URL=http://localhost:5174
 
 # ✅ 必填：Minimax AI
 MINIMAX_API_KEY=你的key粘贴到这里
@@ -168,14 +168,14 @@ npm run dev
 ```
 VITE v7.x.x ready in xxx ms
 
-➜  Local:   http://localhost:5173/
+➜  Local:   http://localhost:5174/
 ```
 
 
 
 ## 第七步：访问项目
 
-打开浏览器，访问 **http://localhost:5173** ，你将看到 AI 热点监控工具的界面。
+打开浏览器，访问 **http://localhost:5174** ，你将看到 AI 热点监控工具的界面。
 
 ### 快速体验流程
 
@@ -262,5 +262,5 @@ npx prisma studio
 | 服务 | 默认端口 | 说明 |
 |------|----------|------|
 | 后端 API | 3001 | Express + Socket.io |
-| 前端页面 | 5173 | Vite 开发服务器 |
+| 前端页面 | 5174 | Vite 开发服务器 |
 | Prisma Studio | 5555 | 数据库可视化（可选） |

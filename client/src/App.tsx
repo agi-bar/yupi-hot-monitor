@@ -1,13 +1,8 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
-  Flame, Search, Plus, Bell, Trash2, 
-  ExternalLink, RefreshCw, X, Check, AlertTriangle,
-  Zap, TrendingUp, Twitter, Globe, Eye, Activity, Clock, Target,
-  ChevronLeft, ChevronRight,
-  MessageCircle, Repeat2, Quote, User, Shield, ShieldAlert,
-  ChevronDown, ChevronUp, ChevronsUpDown, ThermometerSun, FileText,
-  Sun, Moon
+  Flame, Search, Plus, Bell, RefreshCw, Sun, Moon,
+  Activity, Target, ChevronRight, ChevronsUpDown, ThermometerSun, Eye, Twitter, Globe, Zap, TrendingUp, Clock, AlertTriangle, User
 } from 'lucide-react';
 import { 
   keywordsApi, hotspotsApi, notificationsApi, triggerHotspotCheck,
@@ -20,32 +15,17 @@ import { BackgroundBeams } from './components/ui/background-beams';
 import { Meteors } from './components/ui/meteors';
 import FilterSortBar, { defaultFilterState, type FilterState } from './components/FilterSortBar';
 import Pagination from './components/Pagination';
+import HotspotCard from './components/HotspotCard';
+import KeywordCard from './components/KeywordCard';
+import Toast from './components/Toast';
 import { sortHotspots } from './utils/sortHotspots';
-import { relativeTime, formatDateTime } from './utils/relativeTime';
 import { useTheme } from './contexts/ThemeContext';
-
-function calcHeatScore(h: Hotspot): number {
-  const likes = h.likeCount ?? 0;
-  const retweets = h.retweetCount ?? 0;
-  const replies = h.replyCount ?? 0;
-  const comments = h.commentCount ?? 0;
-  const quotes = h.quoteCount ?? 0;
-  const views = h.viewCount ?? 0;
-  const raw = likes * 2 + retweets * 3 + replies * 1.5 + comments * 1.5 + quotes * 2 + views / 100;
-  if (raw <= 0) return 0;
-  return Math.min(100, Math.round(Math.log10(raw + 1) * 25));
-}
-
-function getHeatLevel(score: number): { label: string; color: string } {
-  if (score >= 80) return { label: '爆', color: 'text-red-500' };
-  if (score >= 60) return { label: '热', color: 'text-orange-500' };
-  if (score >= 40) return { label: '温', color: 'text-amber-500' };
-  if (score >= 20) return { label: '凉', color: 'text-blue-500' };
-  return { label: '冷', color: 'text-slate-400' };
-}
+import { useToast } from './hooks/useToast';
 
 function App() {
-  const { theme, toggleTheme, isDark } = useTheme();
+  const { toggleTheme, isDark } = useTheme();
+  const { toasts, showToast, removeToast, success, error } = useToast();
+  
   const [keywords, setKeywords] = useState<Keyword[]>([]);
   const [hotspots, setHotspots] = useState<Hotspot[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
@@ -58,7 +38,7 @@ function App() {
   const [isChecking, setIsChecking] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
   const [activeTab, setActiveTab] = useState<'dashboard' | 'keywords' | 'search'>('dashboard');
-  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  
   const [dashboardFilters, setDashboardFilters] = useState<FilterState>({ ...defaultFilterState });
   const [searchFilters, setSearchFilters] = useState<FilterState>({ ...defaultFilterState });
   const [currentPage, setCurrentPage] = useState(1);
@@ -101,12 +81,13 @@ function App() {
       if (activeKeywords.length > 0) {
         subscribeToKeywords(activeKeywords);
       }
-    } catch (error) {
-      console.error('Failed to load data:', error);
+    } catch (err) {
+      console.error('Failed to load data:', err);
+      error('加载数据失败');
     } finally {
       setIsLoading(false);
     }
-  }, [dashboardFilters, currentPage, pageSize]);
+  }, [dashboardFilters, currentPage, pageSize, error]);
 
   useEffect(() => {
     setCurrentPage(1);
@@ -123,9 +104,12 @@ function App() {
 
   useEffect(() => {
     const unsubHotspot = onNewHotspot((hotspot) => {
-      setHotspots(prev => [hotspot as Hotspot, ...prev.slice(0, 19)]);
+      setHotspots(prev => {
+        const exists = prev.some(h => h.id === hotspot.id);
+        if (exists) return prev;
+        return [hotspot as Hotspot, ...prev.slice(0, pageSize - 1)];
+      });
       showToast('发现新热点: ' + hotspot.title.slice(0, 30), 'success');
-      loadData();
     });
 
     const unsubNotif = onNotification(() => {
@@ -136,12 +120,7 @@ function App() {
       unsubHotspot();
       unsubNotif();
     };
-  }, [loadData]);
-
-  const showToast = (message: string, type: 'success' | 'error') => {
-    setToast({ message, type });
-    setTimeout(() => setToast(null), 3000);
-  };
+  }, [pageSize, showToast]);
 
   const handleAddKeyword = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -151,10 +130,10 @@ function App() {
       const keyword = await keywordsApi.create({ text: newKeyword.trim() });
       setKeywords(prev => [keyword, ...prev]);
       setNewKeyword('');
-      showToast('关键词添加成功', 'success');
+      success('关键词添加成功');
       subscribeToKeywords([keyword.text]);
-    } catch (error: any) {
-      showToast(error.message || '添加失败', 'error');
+    } catch (err: any) {
+      error(err.message || '添加失败');
     }
   };
 
@@ -162,9 +141,9 @@ function App() {
     try {
       await keywordsApi.delete(id);
       setKeywords(prev => prev.filter(k => k.id !== id));
-      showToast('关键词已删除', 'success');
-    } catch (error) {
-      showToast('删除失败', 'error');
+      success('关键词已删除');
+    } catch {
+      error('删除失败');
     }
   };
 
@@ -172,8 +151,8 @@ function App() {
     try {
       const updated = await keywordsApi.toggle(id);
       setKeywords(prev => prev.map(k => k.id === id ? updated : k));
-    } catch (error) {
-      showToast('操作失败', 'error');
+    } catch {
+      error('操作失败');
     }
   };
 
@@ -185,9 +164,9 @@ function App() {
     try {
       const result = await hotspotsApi.search(searchQuery);
       setSearchResults(result.results);
-      showToast(`找到 ${result.results.length} 条结果`, 'success');
-    } catch (error) {
-      showToast('搜索失败', 'error');
+      success(`找到 ${result.results.length} 条结果`);
+    } catch {
+      error('搜索失败');
     } finally {
       setIsLoading(false);
     }
@@ -197,10 +176,10 @@ function App() {
     setIsChecking(true);
     try {
       await triggerHotspotCheck();
-      showToast('热点检查已触发', 'success');
+      success('热点检查已触发');
       setTimeout(loadData, 5000);
-    } catch (error) {
-      showToast('触发失败', 'error');
+    } catch {
+      error('触发失败');
     } finally {
       setIsChecking(false);
     }
@@ -211,15 +190,16 @@ function App() {
       await notificationsApi.markAllAsRead();
       setUnreadCount(0);
       setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
-    } catch (error) {
-      console.error('Failed to mark as read:', error);
+    } catch (err) {
+      console.error('Failed to mark as read:', err);
     }
   };
 
   const toggleReason = (id: string) => {
     setExpandedReasons(prev => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
       return next;
     });
   };
@@ -227,7 +207,8 @@ function App() {
   const toggleContent = (id: string) => {
     setExpandedContents(prev => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
       return next;
     });
   };
@@ -277,15 +258,6 @@ function App() {
     return results;
   }, [searchResults, searchFilters]);
 
-  const getImportanceIcon = (importance: string) => {
-    switch (importance) {
-      case 'urgent': return <AlertTriangle className="w-4 h-4" />;
-      case 'high': return <Flame className="w-4 h-4" />;
-      case 'medium': return <Zap className="w-4 h-4" />;
-      default: return <TrendingUp className="w-4 h-4" />;
-    }
-  };
-
   const getSourceIcon = (source: string) => {
     switch (source) {
       case 'twitter': return <Twitter className="w-4 h-4" />;
@@ -328,24 +300,7 @@ function App() {
       <div className="fixed top-0 right-0 w-[600px] h-[600px] bg-blue-500/5 dark:bg-blue-500/5 rounded-full blur-3xl pointer-events-none" />
       <div className="fixed bottom-0 left-0 w-[400px] h-[400px] bg-cyan-500/5 dark:bg-cyan-500/5 rounded-full blur-3xl pointer-events-none" />
 
-      <AnimatePresence>
-        {toast && (
-          <motion.div
-            initial={{ opacity: 0, y: -20, x: '-50%' }}
-            animate={{ opacity: 1, y: 0, x: '-50%' }}
-            exit={{ opacity: 0, y: -20 }}
-            className={cn(
-              "fixed top-6 left-1/2 z-50 px-5 py-3 rounded-xl backdrop-blur-xl flex items-center gap-3 shadow-lg",
-              toast.type === 'success' 
-                ? 'bg-emerald-500/10 dark:bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400' 
-                : 'bg-red-500/10 dark:bg-red-500/10 border border-red-500/30 text-red-600 dark:text-red-400'
-            )}
-          >
-            {toast.type === 'success' ? <Check className="w-4 h-4" /> : <X className="w-4 h-4" />}
-            <span className="text-sm font-medium">{toast.message}</span>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      <Toast toasts={toasts} onRemove={removeToast} />
 
       <header className="sticky top-0 z-40 backdrop-blur-2xl bg-[var(--bg-surface)]/80 dark:bg-[var(--bg-surface)]/70 border-b border-[var(--border-default)]">
         <div className="max-w-6xl mx-auto px-6 py-4">
@@ -371,11 +326,7 @@ function App() {
                 className="p-2.5 rounded-xl bg-[var(--bg-elevated)] hover:bg-[var(--bg-hover)] border border-[var(--border-default)] transition-all"
                 title={isDark ? '切换到白天模式' : '切换到夜间模式'}
               >
-                {isDark ? (
-                  <Sun className="w-5 h-5 text-amber-400" />
-                ) : (
-                  <Moon className="w-5 h-5 text-slate-600" />
-                )}
+                {isDark ? <Sun className="w-5 h-5 text-amber-400" /> : <Moon className="w-5 h-5 text-slate-600" />}
               </motion.button>
 
               <motion.button
@@ -578,222 +529,17 @@ function App() {
                     </div>
                   )}
 
-                  {hotspots.map((hotspot, index) => {
-                    const heatScore = calcHeatScore(hotspot);
-                    const heat = getHeatLevel(heatScore);
-                    return (
-                    <motion.div
+                  {hotspots.map((hotspot, index) => (
+                    <HotspotCard
                       key={hotspot.id}
-                      initial={{ opacity: 0, x: -10 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      transition={{ delay: index * 0.03 }}
-                      className="group p-5 rounded-2xl bg-[var(--bg-card)] hover:bg-[var(--bg-card-hover)] border border-[var(--border-subtle)] hover:border-[var(--border-default)] transition-all"
-                    >
-                      <div className="flex items-start justify-between gap-4">
-                        <div className="flex-1 min-w-0">
-                          <div className="flex flex-wrap items-center gap-2 mb-3">
-                            <span className={cn("px-2.5 py-1 rounded-lg text-[10px] font-semibold uppercase tracking-wider flex items-center border", getImportanceBgClass(hotspot.importance))}>
-                              {getImportanceIcon(hotspot.importance)}
-                              <span className="ml-1">{hotspot.importance}</span>
-                            </span>
-                            <span className="flex items-center gap-1 text-xs text-[var(--text-muted)]">
-                              {getSourceIcon(hotspot.source)}
-                              {getSourceLabel(hotspot.source)}
-                            </span>
-                            {hotspot.keyword && (
-                              <span className="text-[10px] px-2 py-0.5 rounded-md bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20">
-                                {hotspot.keyword.text}
-                              </span>
-                            )}
-                            {!hotspot.isReal && (
-                              <span className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-md bg-red-500/10 text-red-600 dark:text-red-400 border border-red-500/20">
-                                <ShieldAlert className="w-3 h-3" />
-                                可疑
-                              </span>
-                            )}
-                            {hotspot.isReal && hotspot.relevance >= 80 && (
-                              <span className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
-                                <Shield className="w-3 h-3" />
-                                可信
-                              </span>
-                            )}
-                            {hotspot.keywordMentioned === true && (
-                              <span className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-md bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20">
-                                <Target className="w-3 h-3" />
-                                直接提及
-                              </span>
-                            )}
-                            {hotspot.keywordMentioned === false && (
-                              <span className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-md bg-yellow-500/10 text-yellow-600 dark:text-yellow-500 border border-yellow-500/20">
-                                <Target className="w-3 h-3" />
-                                间接相关
-                              </span>
-                            )}
-                            <span className={cn("flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-md bg-[var(--bg-elevated)] border border-[var(--border-subtle)] font-medium", heat.color)}>
-                              <ThermometerSun className="w-3 h-3" />
-                              {heat.label} {heatScore}
-                            </span>
-                          </div>
-                          
-                          <h3 className="font-medium text-[var(--text-primary)] mb-2 line-clamp-2 group-hover:text-blue-500 dark:group-hover:text-blue-400 transition-colors">
-                            {hotspot.title}
-                          </h3>
-                          
-                          {hotspot.summary && (
-                            <div className="mb-3">
-                              <span className="text-[10px] text-blue-600 dark:text-blue-400/60 font-medium mr-1.5">AI 摘要</span>
-                              <span className="text-sm text-[var(--text-secondary)]">{hotspot.summary}</span>
-                            </div>
-                          )}
-
-                          {hotspot.authorName && (
-                            <div className="flex items-center gap-2 mb-3">
-                              {hotspot.authorAvatar ? (
-                                <img src={hotspot.authorAvatar} alt="" className="w-5 h-5 rounded-full object-cover" />
-                              ) : (
-                                <User className="w-4 h-4 text-[var(--text-muted)]" />
-                              )}
-                              <span className="text-xs text-[var(--text-secondary)]">
-                                {hotspot.authorName}
-                                {hotspot.authorUsername && <span className="text-[var(--text-muted)] ml-1">@{hotspot.authorUsername}</span>}
-                              </span>
-                              {hotspot.authorVerified && (
-                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-600 dark:text-blue-400">✓ 认证</span>
-                              )}
-                              {hotspot.authorFollowers != null && hotspot.authorFollowers > 0 && (
-                                <span className="text-[10px] text-[var(--text-muted)]">{hotspot.authorFollowers.toLocaleString()} 粉丝</span>
-                              )}
-                            </div>
-                          )}
-                          
-                          <div className="flex flex-wrap items-center gap-3 text-xs text-[var(--text-muted)] mb-2">
-                            <span className="flex items-center gap-1">
-                              <Target className="w-3.5 h-3.5" />
-                              相关性 {hotspot.relevance}%
-                            </span>
-                            {hotspot.likeCount != null && hotspot.likeCount > 0 && (
-                              <span className="flex items-center gap-1" title="点赞">
-                                <Zap className="w-3.5 h-3.5" />
-                                {hotspot.likeCount.toLocaleString()}
-                              </span>
-                            )}
-                            {hotspot.retweetCount != null && hotspot.retweetCount > 0 && (
-                              <span className="flex items-center gap-1" title="转发">
-                                <Repeat2 className="w-3.5 h-3.5" />
-                                {hotspot.retweetCount.toLocaleString()}
-                              </span>
-                            )}
-                            {hotspot.replyCount != null && hotspot.replyCount > 0 && (
-                              <span className="flex items-center gap-1" title="回复">
-                                <MessageCircle className="w-3.5 h-3.5" />
-                                {hotspot.replyCount.toLocaleString()}
-                              </span>
-                            )}
-                            {hotspot.commentCount != null && hotspot.commentCount > 0 && (
-                              <span className="flex items-center gap-1" title="评论">
-                                <MessageCircle className="w-3.5 h-3.5" />
-                                {hotspot.commentCount.toLocaleString()}
-                              </span>
-                            )}
-                            {hotspot.quoteCount != null && hotspot.quoteCount > 0 && (
-                              <span className="flex items-center gap-1" title="引用">
-                                <Quote className="w-3.5 h-3.5" />
-                                {hotspot.quoteCount.toLocaleString()}
-                              </span>
-                            )}
-                            {hotspot.viewCount != null && hotspot.viewCount > 0 && (
-                              <span className="flex items-center gap-1" title="浏览量">
-                                <Eye className="w-3.5 h-3.5" />
-                                {hotspot.viewCount.toLocaleString()}
-                              </span>
-                            )}
-                            {hotspot.danmakuCount != null && hotspot.danmakuCount > 0 && (
-                              <span className="flex items-center gap-1" title="弹幕">
-                                💬 {hotspot.danmakuCount.toLocaleString()}
-                              </span>
-                            )}
-                          </div>
-
-                          <div className="flex flex-wrap items-center gap-3 text-[11px] text-[var(--text-muted)]">
-                            {hotspot.publishedAt && (
-                              <span className="flex items-center gap-1" title={`发布于 ${formatDateTime(hotspot.publishedAt)}`}>
-                                <Clock className="w-3 h-3" />
-                                发布 {relativeTime(hotspot.publishedAt)}
-                              </span>
-                            )}
-                            <span className="flex items-center gap-1" title={`抓取于 ${formatDateTime(hotspot.createdAt)}`}>
-                              <Activity className="w-3 h-3" />
-                              抓取 {relativeTime(hotspot.createdAt)}
-                            </span>
-                          </div>
-
-                          {hotspot.relevanceReason && (
-                            <div className="mt-2">
-                              <button
-                                onClick={() => toggleReason(hotspot.id)}
-                                className="flex items-center gap-1 text-[11px] text-blue-600 dark:text-blue-400/70 hover:text-blue-500 dark:hover:text-blue-400 transition-colors"
-                              >
-                                {expandedReasons.has(hotspot.id) ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-                                AI 分析理由
-                              </button>
-                              <AnimatePresence>
-                                {expandedReasons.has(hotspot.id) && (
-                                  <motion.div
-                                    initial={{ height: 0, opacity: 0 }}
-                                    animate={{ height: 'auto', opacity: 1 }}
-                                    exit={{ height: 0, opacity: 0 }}
-                                    className="overflow-hidden"
-                                  >
-                                    <p className="text-xs text-[var(--text-secondary)] mt-1 pl-4 border-l-2 border-blue-500/20">
-                                      {hotspot.relevanceReason}
-                                    </p>
-                                  </motion.div>
-                                )}
-                              </AnimatePresence>
-                            </div>
-                          )}
-
-                          {hotspot.content && hotspot.content !== hotspot.summary && (
-                            <div className="mt-2">
-                              <button
-                                onClick={() => toggleContent(hotspot.id)}
-                                className="flex items-center gap-1 text-[11px] text-[var(--text-muted)] hover:text-[var(--text-secondary)] transition-colors"
-                              >
-                                {expandedContents.has(hotspot.id) ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-                                <FileText className="w-3 h-3" />
-                                原始内容
-                              </button>
-                              <AnimatePresence>
-                                {expandedContents.has(hotspot.id) && (
-                                  <motion.div
-                                    initial={{ height: 0, opacity: 0 }}
-                                    animate={{ height: 'auto', opacity: 1 }}
-                                    exit={{ height: 0, opacity: 0 }}
-                                    className="overflow-hidden"
-                                  >
-                                    <p className="text-xs text-[var(--text-secondary)] mt-1 pl-4 border-l-2 border-[var(--border-subtle)] whitespace-pre-wrap break-words max-h-40 overflow-y-auto">
-                                      {hotspot.content}
-                                    </p>
-                                  </motion.div>
-                                )}
-                              </AnimatePresence>
-                            </div>
-                          )}
-                        </div>
-                        
-                        <a
-                          href={hotspot.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          onClick={(e) => e.stopPropagation()}
-                          className="p-2.5 rounded-xl bg-[var(--bg-elevated)] hover:bg-blue-500/20 text-[var(--text-muted)] hover:text-blue-500 dark:hover:text-blue-400 transition-all opacity-0 group-hover:opacity-100"
-                        >
-                          <ExternalLink className="w-4 h-4" />
-                        </a>
-                      </div>
-                    </motion.div>
-                    );
-                  })}
+                      hotspot={hotspot}
+                      index={index}
+                      expandedReasons={expandedReasons}
+                      expandedContents={expandedContents}
+                      onToggleReason={toggleReason}
+                      onToggleContent={toggleContent}
+                    />
+                  ))}
                 </div>
               )}
 
@@ -842,56 +588,14 @@ function App() {
 
             <div className="grid gap-3 md:grid-cols-2">
               <AnimatePresence>
-                {keywords.map((keyword, i) => (
-                  <motion.div
+                {keywords.map((keyword, index) => (
+                  <KeywordCard
                     key={keyword.id}
-                    layout
-                    initial={{ opacity: 0, scale: 0.9 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0, scale: 0.9 }}
-                    transition={{ delay: i * 0.02 }}
-                    className={cn(
-                      "group p-4 rounded-xl border transition-all",
-                      keyword.isActive 
-                        ? "bg-[var(--bg-card)] border-blue-500/20 hover:border-blue-500/30" 
-                        : "bg-[var(--bg-card)] border-[var(--border-subtle)] opacity-60"
-                    )}
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <button
-                          onClick={() => handleToggleKeyword(keyword.id)}
-                          className={cn(
-                            "w-11 h-6 rounded-full transition-all relative",
-                            keyword.isActive ? "bg-blue-500" : "bg-slate-300 dark:bg-slate-700"
-                          )}
-                        >
-                          <span className={cn(
-                            "absolute top-1 w-4 h-4 bg-white rounded-full shadow transition-all",
-                            keyword.isActive ? "left-6" : "left-1"
-                          )} />
-                        </button>
-                        
-                        <div>
-                          <span className={cn("font-medium", keyword.isActive ? "text-[var(--text-primary)]" : "text-[var(--text-muted)]")}>
-                            {keyword.text}
-                          </span>
-                          {keyword._count && keyword._count.hotspots > 0 && (
-                            <span className="ml-2 text-xs text-[var(--text-muted)]">
-                              {keyword._count.hotspots} 条热点
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                      
-                      <button
-                        onClick={() => handleDeleteKeyword(keyword.id)}
-                        className="p-2 rounded-lg text-[var(--text-muted)] hover:text-red-500 hover:bg-red-500/10 opacity-0 group-hover:opacity-100 transition-all"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </motion.div>
+                    keyword={keyword}
+                    index={index}
+                    onToggle={handleToggleKeyword}
+                    onDelete={handleDeleteKeyword}
+                  />
                 ))}
               </AnimatePresence>
             </div>
@@ -952,22 +656,36 @@ function App() {
                   <p className="text-sm text-[var(--text-muted)] mt-1 opacity-70">尝试调整筛选条件</p>
                 </div>
               )}
-              {filteredSearchResults.map((hotspot, i) => {
-                const heatScore = calcHeatScore(hotspot);
-                const heat = getHeatLevel(heatScore);
+              {filteredSearchResults.map((hotspot, index) => {
+                const heatScore = Math.round(
+                  (hotspot.likeCount ?? 0) * 2 + 
+                  (hotspot.retweetCount ?? 0) * 3 + 
+                  (hotspot.replyCount ?? 0) * 1.5 + 
+                  (hotspot.commentCount ?? 0) * 1.5 + 
+                  (hotspot.quoteCount ?? 0) * 2 + 
+                  (hotspot.viewCount ?? 0) / 100
+                );
+                const heat = heatScore >= 80 ? { label: '爆', color: 'text-red-500' } :
+                            heatScore >= 60 ? { label: '热', color: 'text-orange-500' } :
+                            heatScore >= 40 ? { label: '温', color: 'text-amber-500' } :
+                            heatScore >= 20 ? { label: '凉', color: 'text-blue-500' } :
+                            { label: '冷', color: 'text-slate-400' };
+                
                 return (
                 <motion.div 
                   key={hotspot.id} 
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: i * 0.03 }}
+                  transition={{ delay: index * 0.03 }}
                   className="group p-5 rounded-2xl bg-[var(--bg-card)] hover:bg-[var(--bg-card-hover)] border border-[var(--border-subtle)] transition-all"
                 >
                   <div className="flex items-start justify-between gap-4">
                     <div className="flex-1 min-w-0">
                       <div className="flex flex-wrap items-center gap-2 mb-3">
                         <span className={cn("px-2.5 py-1 rounded-lg text-[10px] font-semibold uppercase flex items-center border", getImportanceBgClass(hotspot.importance))}>
-                          {getImportanceIcon(hotspot.importance)}
+                          {hotspot.importance === 'urgent' ? <AlertTriangle className="w-4 h-4" /> : 
+                           hotspot.importance === 'high' ? <Flame className="w-4 h-4" /> :
+                           hotspot.importance === 'medium' ? <Zap className="w-4 h-4" /> : <TrendingUp className="w-4 h-4" />}
                           <span className="ml-1">{hotspot.importance}</span>
                         </span>
                         <span className="flex items-center gap-1 text-xs text-[var(--text-muted)]">
@@ -976,7 +694,7 @@ function App() {
                         </span>
                         {!hotspot.isReal && (
                           <span className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-md bg-red-500/10 text-red-600 dark:text-red-400 border border-red-500/20">
-                            <ShieldAlert className="w-3 h-3" />
+                            <AlertTriangle className="w-3 h-3" />
                             可疑
                           </span>
                         )}
@@ -1019,20 +737,14 @@ function App() {
                           </span>
                         )}
                       </div>
-                      {hotspot.publishedAt && (
-                        <div className="flex items-center gap-1 text-[11px] text-[var(--text-muted)] mt-1" title={formatDateTime(hotspot.publishedAt)}>
-                          <Clock className="w-3 h-3" />
-                          发布 {relativeTime(hotspot.publishedAt)}
-                        </div>
-                      )}
                     </div>
                     <a
                       href={hotspot.url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="shrink-0 px-4 py-2 rounded-xl bg-blue-500/10 hover:bg-blue-500/20 text-blue-600 dark:text-blue-400 text-sm font-medium transition-all"
+                      className="p-2.5 rounded-xl bg-[var(--bg-elevated)] hover:bg-blue-500/20 text-[var(--text-muted)] hover:text-blue-500 dark:hover:text-blue-400 transition-all opacity-0 group-hover:opacity-100"
                     >
-                      查看
+                      <ChevronRight className="w-4 h-4" />
                     </a>
                   </div>
                 </motion.div>

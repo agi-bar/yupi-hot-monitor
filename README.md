@@ -171,15 +171,15 @@ TWITTER_API_KEY=你的key
 # 终端 1：启动后端（端口 3001）
 cd server && npm run dev
 
-# 终端 2：启动前端（端口 5173）
+# 终端 2：启动前端（端口 5174）
 cd client && npm run dev
 ```
 
-访问 **http://localhost:5173** ，输入关键词即可开始监控热点 🔥
+访问 **http://localhost:5174** ，输入关键词即可开始监控热点 🔥
 
 | 服务 | 地址 |
 |------|------|
-| 前端页面 | http://localhost:5173 |
+| 前端页面 | http://localhost:5174 |
 | 后端 API | http://localhost:3001 |
 | 数据库管理 | `cd server && npx prisma studio`（可选） |
 

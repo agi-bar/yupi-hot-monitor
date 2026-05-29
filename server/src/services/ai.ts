@@ -2,8 +2,8 @@ import Anthropic from '@anthropic-ai/sdk';
 import type { AIAnalysis } from '../types.js';
 
 const anthropic = new Anthropic({
-  baseURL: 'https://api.minimaxi.com/anthropic/v1',
-  apiKey: process.env.MINIMAX_API_KEY ?? ''
+  baseURL: process.env.ANTHROPIC_BASE_URL || 'https://api.minimaxi.com/anthropic',
+  apiKey: process.env.ANTHROPIC_API_KEY ?? process.env.MINIMAX_API_KEY ?? ''
 });
 
 // ========== Query Expansion（查询扩展） ==========
@@ -24,7 +24,7 @@ export async function expandKeyword(keyword: string): Promise<string[]> {
   // 不管 AI 是否可用，先提取基础核心词
   const coreTerms = extractCoreTerms(keyword);
 
-  if (!process.env.MINIMAX_API_KEY) {
+  if (!process.env.ANTHROPIC_API_KEY && !process.env.MINIMAX_API_KEY) {
     const result = [keyword, ...coreTerms];
     expansionCache.set(keyword, result);
     return result;
@@ -149,7 +149,7 @@ export async function analyzeContent(content: string, keyword: string, preMatchR
   // 默认预匹配结果
   const matchResult = preMatchResult ?? { matched: false, matchedTerms: [] };
 
-  if (!process.env.MINIMAX_API_KEY) {
+  if (!process.env.ANTHROPIC_API_KEY && !process.env.MINIMAX_API_KEY) {
     console.warn('Minimax API key not configured, using fallback analysis');
     return {
       isReal: true,
@@ -198,10 +198,10 @@ export async function analyzeContent(content: string, keyword: string, preMatchR
     throw new Error('Failed to parse AI response');
   } catch (error) {
     console.error('AI analysis failed:', error);
-    // Fallback
+    // Fallback - 提高阈值以确保数据不被过滤
     return {
       isReal: true,
-      relevance: matchResult.matched ? 30 : 10,
+      relevance: matchResult.matched ? 65 : 50,
       relevanceReason: 'AI 分析失败，使用默认分数',
       keywordMentioned: matchResult.matched,
       importance: 'low',

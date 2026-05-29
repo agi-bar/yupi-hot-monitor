@@ -69,7 +69,8 @@ export async function searchBing(query: string): Promise<SearchResult[]> {
           title,
           content: snippet,
           url,
-          source: 'bing'
+          source: 'bing',
+          publishedAt: new Date()
         });
       }
     });
@@ -115,7 +116,8 @@ export async function searchGoogle(query: string): Promise<SearchResult[]> {
           title,
           content: snippet,
           url,
-          source: 'google'
+          source: 'google',
+          publishedAt: new Date()
         });
       }
     });
@@ -170,7 +172,8 @@ export async function searchDuckDuckGo(query: string): Promise<SearchResult[]> {
           title,
           content: snippet,
           url,
-          source: 'duckduckgo'
+          source: 'duckduckgo',
+          publishedAt: new Date()
         });
       }
     });

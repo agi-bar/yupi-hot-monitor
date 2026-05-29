@@ -89,7 +89,7 @@ HotPulse 是一款面向 AI 编程博主和技术内容创作者的**智能化�
 | 服务 | 默认端口 | 说明 |
 |------|----------|------|
 | 后端 API | 3001 | Express + Socket.io |
-| 前端页面 | 5173 | Vite 开发服务器 |
+| 前端页面 | 5174 | Vite 开发服务器 |
 | Prisma Studio | 5555 | 数据库可视化（可选） |
 
 ---
@@ -583,7 +583,7 @@ DATABASE_URL="file:./dev.db"
 
 # 服务器
 PORT=3001
-CLIENT_URL=http://localhost:5173
+CLIENT_URL=http://localhost:5174
 
 # AI 服务（必需）
 MINIMAX_API_KEY=your_api_key
@@ -796,7 +796,7 @@ runHotspotCheck(io)
 
 ```
 终端 1: cd server && npm run dev      # :3001
-终端 2: cd client && npm run dev       # :5173
+终端 2: cd client && npm run dev       # :5174
 ```
 
 ### 10.2 生产环境建议
