@@ -211,8 +211,9 @@ function prioritizeResults(results: SearchResult[]): SearchResult[] {
 
 // 实时软去重函数：清理同一标题+来源的重复记录
 // 保留最新插入的记录，删除其他的
-// 注意：这是系统自动去重，删除的旧记录不需要设置永久缓存
+// 注意：这是系统自动去重，不清理软去重缓存
 // 因为新插入的记录会在 deduplicateWithCache 中自动设置24小时缓存
+// 如果删除缓存，可能导致短暂的去重失效窗口
 async function cleanupRecentDuplicates(
   newestId: string,
   title: string,
@@ -230,18 +231,6 @@ async function cleanupRecentDuplicates(
     
     if (result.count > 0) {
       console.log(`  🧹 Soft deduplication: removed ${result.count} duplicate(s) for "${title.slice(0, 30)}..."`);
-      
-      // 清理软去重缓存，让同一标题的数据可以在24小时后重新被抓取
-      // 注意：这不是用户主动删除，不需要设置永久缓存
-      try {
-        const cacheKey = `${SOFT_DEDUP_CACHE_PREFIX}${source}:${title}`;
-        await getRedis().del(cacheKey);
-      } catch (cacheError) {
-        console.warn(`  ⚠️  Failed to clear dedup cache:`, cacheError);
-      }
-      
-      // 同时清理这些记录的通知
-      // 注意：这里只清理了重复的热点，没清理通知（通知可能需要单独处理）
     }
     
     return result.count;

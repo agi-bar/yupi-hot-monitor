@@ -1,5 +1,6 @@
 import { io, Socket } from 'socket.io-client';
 import type { NotificationPayload } from '../types/notification';
+import type { HotspotEvent as SharedHotspotEvent } from '../types/hotspot';
 
 let socket: Socket | null = null;
 const MAX_RECONNECT_ATTEMPTS = 10;
@@ -85,7 +86,11 @@ export function getSocket(): Socket {
 
       if (subscribedKeywords.length > 0) {
         console.log('🔌 Re-subscribing to keywords after reconnection:', subscribedKeywords);
-        socket?.emit('subscribe', subscribedKeywords);
+        try {
+          socket?.emit('subscribe', subscribedKeywords);
+        } catch (error) {
+          console.error('🔌 Failed to re-subscribe keywords:', error);
+        }
       }
 
       reconnectListeners.forEach(callback => callback());
@@ -133,42 +138,7 @@ export function clearSubscribedKeywords(): void {
   subscribedKeywords = [];
 }
 
-export interface HotspotEvent {
-  id: string;
-  title: string;
-  content: string;
-  url: string;
-  source: string;
-  sourceId: string | null;
-  sourceRecordId: string | null;
-  sourceRecord: {
-    id: string;
-    name: string;
-    type: string;
-    category: string | null;
-  } | null;
-  isReal: boolean;
-  relevance: number;
-  relevanceReason: string | null;
-  keywordMentioned: boolean | null;
-  importance: 'low' | 'medium' | 'high' | 'urgent';
-  summary: string | null;
-  viewCount: number | null;
-  likeCount: number | null;
-  retweetCount: number | null;
-  replyCount: number | null;
-  commentCount: number | null;
-  quoteCount: number | null;
-  danmakuCount: number | null;
-  authorName: string | null;
-  authorUsername: string | null;
-  authorAvatar: string | null;
-  authorFollowers: number | null;
-  authorVerified: boolean | null;
-  publishedAt: string | null;
-  createdAt: string;
-  keyword: { id: string; text: string; category: string | null } | null;
-}
+export type { SharedHotspotEvent as HotspotEvent };
 
 export function onNewHotspot(callback: (hotspot: HotspotEvent) => void): () => void {
   const s = getSocket();

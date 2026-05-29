@@ -1,4 +1,19 @@
 const API_BASE = '/api';
+const DEFAULT_TIMEOUT_MS = 30000;
+
+function getAuthHeaders(): Record<string, string> {
+  try {
+    const token = localStorage.getItem('authToken');
+    if (token) {
+      return {
+        'Authorization': `Bearer ${token}`
+      };
+    }
+  } catch (error) {
+    console.warn('Failed to access localStorage:', error);
+  }
+  return {};
+}
 
 export interface Source {
   id: string;
@@ -82,28 +97,44 @@ function formatApiError(status: number, errorData: ApiError): string {
 }
 
 async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-  const response = await fetch(`${API_BASE}${endpoint}`, {
-    headers: {
-      'Content-Type': 'application/json',
-      ...options.headers,
-    },
-    ...options,
-  });
-
-  if (!response.ok) {
-    let errorMessage = `请求失败 (${response.status})`;
+  const authHeaders = getAuthHeaders();
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
+  
+  try {
+    const response = await fetch(`${API_BASE}${endpoint}`, {
+      headers: {
+        'Content-Type': 'application/json',
+        ...authHeaders,
+        ...options.headers,
+      },
+      signal: controller.signal,
+      ...options,
+    });
     
-    try {
-      const errorData: ApiError = await response.json();
-      errorMessage = formatApiError(response.status, errorData);
-    } catch {
-      // 如果解析失败，使用默认错误消息
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      let errorMessage = `请求失败 (${response.status})`;
+      
+      try {
+        const errorData: ApiError = await response.json();
+        errorMessage = formatApiError(response.status, errorData);
+      } catch {
+        // 如果解析失败，使用默认错误消息
+      }
+      
+      throw new Error(errorMessage);
     }
-    
-    throw new Error(errorMessage);
-  }
 
-  return response.json();
+    return response.json();
+  } catch (error) {
+    clearTimeout(timeoutId);
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error('请求超时，请稍后重试');
+    }
+    throw error;
+  }
 }
 
 export const sourcesApi = {

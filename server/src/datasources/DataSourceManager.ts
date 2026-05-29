@@ -282,7 +282,9 @@ class DataSourceManager {
       sourceIds: Array.from(this.sources.keys()),
       configIds: Array.from(this.configs.keys())
     };
-    console.log(`[DataSourceManager] 📊 Status: ${status.sourcesCount} sources, ${status.configsCount} configs`);
+    if (process.env.NODE_ENV === 'development') {
+      console.log(`[DataSourceManager] 📊 Status: ${status.sourcesCount} sources, ${status.configsCount} configs`);
+    }
     return status;
   }
   
@@ -290,14 +292,18 @@ class DataSourceManager {
     const hardcodedTypes = Array.from(this.sources.keys());
     const dynamicTypes = Array.from(this.configs.keys());
     const allTypes = [...new Set([...hardcodedTypes, ...dynamicTypes])];
-    console.log(`[DataSourceManager] 📋 Registered types: hardcoded=${hardcodedTypes.length}, dynamic=${dynamicTypes.length}, total=${allTypes.length}`);
+    if (process.env.NODE_ENV === 'development') {
+      console.log(`[DataSourceManager] 📋 Registered types: hardcoded=${hardcodedTypes.length}, dynamic=${dynamicTypes.length}, total=${allTypes.length}`);
+    }
     return allTypes;
   }
-  
+
   isValidType(type: string): boolean {
     const isHardcoded = this.sources.has(type);
     const isDynamic = this.configs.has(type);
-    console.log(`[DataSourceManager] 🔍 Type validation: ${type} - hardcoded=${isHardcoded}, dynamic=${isDynamic}`);
+    if (process.env.NODE_ENV === 'development') {
+      console.log(`[DataSourceManager] 🔍 Type validation: ${type} - hardcoded=${isHardcoded}, dynamic=${isDynamic}`);
+    }
     return isHardcoded || isDynamic;
   }
 }

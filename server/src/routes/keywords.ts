@@ -54,8 +54,9 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ error: 'Keyword text is required' });
     }
 
-    // 规范化关键词：去除首尾空格并转换为小写，避免重复关键词（如"AI"和"ai"）
-    const normalizedText = text.trim().toLowerCase();
+    // 保留原始大小写（preMatchKeyword 使用 toLowerCase 进行大小写不敏感匹配）
+    // 去除首尾空格但保留原始大小写以提高可读性
+    const normalizedText = text.trim();
 
     const keyword = await prisma.keyword.create({
       data: {
@@ -79,8 +80,8 @@ router.put('/:id', async (req, res) => {
   try {
     const { text, category, isActive } = req.body;
 
-    // 规范化关键词：去除首尾空格并转换为小写
-    const normalizedText = text?.trim()?.toLowerCase() || null;
+    // 保留原始大小写（preMatchKeyword 使用 toLowerCase 进行大小写不敏感匹配）
+    const normalizedText = text?.trim() || null;
 
     const keyword = await prisma.keyword.update({
       where: { id: req.params.id },

@@ -1,60 +1,18 @@
+import type { Hotspot, Keyword } from '../types/hotspot';
+import { getAuthHeaders } from '../utils/auth';
+
+export type { Hotspot, Keyword };
+
 const API_BASE = '/api';
+const DEFAULT_TIMEOUT_MS = 30000;
+const MAX_RETRIES = 3;
+const RETRY_DELAY_MS = 1000;
 
-function getAuthHeaders(): Record<string, string> {
-  const token = localStorage.getItem('authToken');
-  if (token) {
-    return {
-      'Authorization': `Bearer ${token}`
-    };
-  }
-  return {};
-}
-
-export interface Keyword {
-  id: string;
-  text: string;
-  category: string | null;
+export interface KeywordWithStats extends Keyword {
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
   _count?: { hotspots: number };
-}
-
-export interface Hotspot {
-  id: string;
-  title: string;
-  content: string;
-  url: string;
-  source: string;
-  sourceId: string | null;
-  sourceRecordId: string | null;
-  sourceRecord?: {
-    id: string;
-    name: string;
-    type: string;
-    category: string | null;
-  } | null;
-  isReal: boolean;
-  relevance: number;
-  relevanceReason: string | null;
-  keywordMentioned: boolean | null;
-  importance: 'low' | 'medium' | 'high' | 'urgent';
-  summary: string | null;
-  viewCount: number | null;
-  likeCount: number | null;
-  retweetCount: number | null;
-  replyCount: number | null;
-  commentCount: number | null;
-  quoteCount: number | null;
-  danmakuCount: number | null;
-  authorName: string | null;
-  authorUsername: string | null;
-  authorAvatar: string | null;
-  authorFollowers: number | null;
-  authorVerified: boolean | null;
-  publishedAt: string | null;
-  createdAt: string;
-  keyword: { id: string; text: string; category: string | null } | null;
 }
 
 export interface Stats {
@@ -71,37 +29,97 @@ export interface PaginationMeta {
   totalPages: number;
 }
 
+export interface NotificationData {
+  id: string;
+  type: string;
+  title: string;
+  content: string;
+  isRead: boolean;
+  createdAt: string;
+  hotspotId?: string;
+}
+
+export interface NotificationAPIResponse {
+  data: NotificationData[];
+  unreadCount: number;
+  pagination: PaginationMeta;
+}
+
 async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const authHeaders = getAuthHeaders();
-  const response = await fetch(`${API_BASE}${endpoint}`, {
-    headers: {
-      'Content-Type': 'application/json',
-      ...authHeaders,
-      ...options.headers
-    },
-    ...options
-  });
+  
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
+    
+    try {
+      const response = await fetch(`${API_BASE}${endpoint}`, {
+        headers: {
+          'Content-Type': 'application/json',
+          ...authHeaders,
+          ...options.headers
+        },
+        signal: controller.signal,
+        ...options
+      });
+      
+      clearTimeout(timeoutId);
 
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ error: 'Request failed' }));
-    throw new Error(error.error || 'Request failed');
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ error: 'Request failed' }));
+        throw new Error(error.error || 'Request failed');
+      }
+
+      if (response.status === 204) {
+        return undefined as T;
+      }
+
+      return response.json();
+    } catch (error) {
+      clearTimeout(timeoutId);
+      
+      if (error instanceof Error && error.name === 'AbortError') {
+        if (attempt < MAX_RETRIES) {
+          console.warn(`请求超时，${RETRY_DELAY_MS * (attempt + 1)}ms 后重试...`);
+          await new Promise(r => setTimeout(r, RETRY_DELAY_MS * (attempt + 1)));
+          continue;
+        }
+        throw new Error('请求超时（多次重试失败），请检查网络或稍后重试');
+      }
+      
+      if (attempt < MAX_RETRIES && isRetryableError(error)) {
+        console.warn(`请求失败，${RETRY_DELAY_MS * (attempt + 1)}ms 后重试...`);
+        await new Promise(r => setTimeout(r, RETRY_DELAY_MS * (attempt + 1)));
+        continue;
+      }
+      
+      throw error;
+    }
   }
+  
+  throw new Error('请求失败，请稍后重试');
+}
 
-  if (response.status === 204) {
-    return undefined as T;
+function isRetryableError(error: unknown): boolean {
+  if (error instanceof TypeError) {
+    return true;
   }
-
-  return response.json();
+  if (error instanceof Error) {
+    if (error.message.includes('fetch') || error.message.includes('network')) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // Keywords API
 export const keywordsApi = {
-  getAll: () => request<Keyword[]>('/keywords'),
+  getAll: () => request<KeywordWithStats[]>('/keywords'),
   
   getById: (id: string) => request<Keyword>(`/keywords/${id}`),
   
   create: (data: { text: string; category?: string }) => 
-    request<Keyword>('/keywords', {
+    request<KeywordWithStats>('/keywords', {
       method: 'POST',
       body: JSON.stringify(data)
     }),
@@ -116,7 +134,7 @@ export const keywordsApi = {
     request<void>(`/keywords/${id}`, { method: 'DELETE' }),
   
   toggle: (id: string) => 
-    request<Keyword>(`/keywords/${id}/toggle`, { method: 'PATCH' })
+    request<KeywordWithStats>(`/keywords/${id}/toggle`, { method: 'PATCH' })
 };
 
 // Hotspots API
@@ -175,7 +193,7 @@ export const notificationsApi = {
         if (value !== undefined) searchParams.append(key, String(value));
       });
     }
-    return request<{ data: Notification[]; unreadCount: number; pagination: PaginationMeta }>(
+    return request<NotificationAPIResponse>(
       `/notifications?${searchParams}`
     );
   },

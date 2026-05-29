@@ -10,7 +10,7 @@ import {
 } from 'lucide-react';
 import { 
   keywordsApi, hotspotsApi, notificationsApi, triggerHotspotCheck,
-  type Keyword, type Hotspot, type Stats
+  type KeywordWithStats, type Hotspot, type Stats, type NotificationData
 } from './services/api';
 import { onNewHotspot, onNotification, subscribeToKeywords, unsubscribeFromKeywords } from './services/socket';
 import { 
@@ -36,6 +36,16 @@ import NotificationPanel from './components/NotificationPanel';
 import { useTheme } from './hooks/useTheme';
 import { getSourceLabel, getSourceIcon } from './services/sourcesConfig';
 import { useFilteredHotspots } from './hooks/useFilteredHotspots';
+import {
+  MAX_HOTSPOTS_DISPLAY,
+  MAX_NOTIFICATIONS_DISPLAY,
+  NAVIGATION_DELAY_MS,
+  API_NOTIFICATIONS_LIMIT,
+  TOAST_DURATION_MS,
+} from './constants/app';
+import { logError } from './utils/errorHandler';
+
+type Keyword = KeywordWithStats;
 
 /** 各平台的归一化因子（基于典型数值范围调整） */
 const SOURCE_NORMALIZATION: Record<string, number> = {
@@ -74,12 +84,6 @@ function getHeatLevel(score: number): { label: string; color: string } {
 
 function App() {
   useTheme();
-
-  // 魔法数字常量
-  const MAX_HOTSPOTS_DISPLAY = 20;
-  const MAX_NOTIFICATIONS_DISPLAY = 20;
-  const NAVIGATION_DELAY_MS = 500;
-  const API_NOTIFICATIONS_LIMIT = 20;
 
   const [keywords, setKeywords] = useState<Keyword[]>([]);
   const [hotspots, setHotspots] = useState<Hotspot[]>([]);
@@ -145,11 +149,11 @@ function App() {
       ]);
       setKeywords(keywordsData);
       setHotspots(hotspotsData.data);
-      setExpandedContents(new Set(hotspotsData.data.map((h: Hotspot) => h.id)));
+      setExpandedContents(new Set());
       setTotalPages(hotspotsData.pagination.totalPages);
       setTotal(hotspotsData.pagination.total);
       setStats(statsData);
-      setNotifications((notifData.data as unknown[]).map(toNotification));
+      setNotifications(notifData.data.map((item: NotificationData) => toNotification(item)));
       setUnreadCount(notifData.unreadCount);
       setNotificationPage(1);
       setHasMoreNotifications(notifData.pagination.page < notifData.pagination.totalPages);
@@ -191,7 +195,16 @@ function App() {
     }
   }, []);
 
-  // 筛选条件或页码变化时重新加载数据
+  const dashboardFiltersRef = useRef(dashboardFilters);
+  
+  dashboardFiltersRef.current = dashboardFilters;
+  
+  const currentPageRef = useRef(currentPage);
+  currentPageRef.current = currentPage;
+  
+  const pageSizeRef = useRef(pageSize);
+  pageSizeRef.current = pageSize;
+
   useEffect(() => {
     if (isInitialLoad.current) {
       isInitialLoad.current = false;
@@ -200,11 +213,11 @@ function App() {
       return;
     }
 
-    if (previousFiltersRef.current !== dashboardFilters || dataLoaded) {
+    if (previousFiltersRef.current !== dashboardFilters) {
       previousFiltersRef.current = dashboardFilters;
       loadData(dashboardFilters, currentPage, pageSize);
     }
-  }, [dashboardFilters, currentPage, pageSize, loadData, dataLoaded]);
+  }, [dashboardFilters, currentPage, pageSize, loadData]);
 
   // 统一的 URL 更新逻辑
   useEffect(() => {
@@ -225,7 +238,7 @@ function App() {
     const unsubHotspot = onNewHotspot((hotspot) => {
       setHotspots(prev => [hotspot as Hotspot, ...prev.slice(0, MAX_HOTSPOTS_DISPLAY - 1)]);
       showToast('发现新热点: ' + hotspot.title.slice(0, NOTIFICATION_MAX_LENGTH.TITLE), 'success');
-      loadData(dashboardFilters, currentPage, pageSize);
+      loadData(dashboardFiltersRef.current, currentPageRef.current, pageSizeRef.current);
     });
 
     const unsubNotif = onNotification((notification) => {
@@ -253,11 +266,11 @@ function App() {
       unsubHotspot();
       unsubNotif();
     };
-  }, [loadData, dashboardFilters, currentPage, pageSize]);
+  }, [loadData]);
 
   const showToast = (message: string, type: 'success' | 'error') => {
     setToast({ message, type });
-    setTimeout(() => setToast(null), 3000);
+    setTimeout(() => setToast(null), TOAST_DURATION_MS);
   };
 
   // 添加关键词
@@ -288,14 +301,12 @@ function App() {
       message: '确定要删除这个监控关键词吗？删除后相关热点将不再追踪。',
       onConfirm: async () => {
         setConfirmDialog(prev => ({ ...prev, isLoading: true }));
-        const previousKeywords = keywords;
         try {
           await keywordsApi.delete(id);
           setKeywords(prev => prev.filter(k => k.id !== id));
           setConfirmDialog(prev => ({ ...prev, isOpen: false, isLoading: false }));
           showToast('关键词已删除', 'success');
         } catch (error) {
-          setKeywords(previousKeywords);
           setConfirmDialog(prev => ({ ...prev, isLoading: false }));
           console.error('删除关键词失败:', error);
           showToast('删除失败', 'error');
@@ -306,12 +317,10 @@ function App() {
 
   // 切换关键词状态
   const handleToggleKeyword = async (id: string) => {
-    const previousKeywords = keywords;
     try {
       const updated = await keywordsApi.toggle(id);
       setKeywords(prev => prev.map(k => k.id === id ? updated : k));
     } catch (error) {
-      setKeywords(previousKeywords);
       console.error('Failed to toggle keyword:', error);
       showToast('操作失败', 'error');
     }
@@ -328,18 +337,7 @@ function App() {
 
         try {
           await hotspotsApi.delete(id);
-
-          const newHotspots = hotspots.filter(h => h.id !== id);
-
-          if (newHotspots.length === 0 && currentPage > 1) {
-            const newPage = currentPage - 1;
-            setCurrentPage(newPage);
-            loadData(dashboardFilters, newPage, pageSize);
-          } else {
-            setHotspots(newHotspots);
-            loadData(dashboardFilters, currentPage, pageSize);
-          }
-
+          loadData(dashboardFiltersRef.current, currentPageRef.current, pageSizeRef.current);
           setConfirmDialog(prev => ({ ...prev, isOpen: false, isLoading: false }));
           showToast('热点已删除', 'success');
         } catch (error) {
@@ -357,7 +355,6 @@ function App() {
 
     const selectedIds = Array.from(selectedHotspots);
     const count = selectedIds.length;
-    const previousSelectedHotspots = new Set(selectedHotspots);
 
     setConfirmDialog({
       isOpen: true,
@@ -369,22 +366,10 @@ function App() {
         try {
           await hotspotsApi.batchDelete(selectedIds);
           setSelectedHotspots(new Set());
-
-          const remainingCount = total - count;
-          const newTotalPages = Math.max(1, Math.ceil(remainingCount / pageSize));
-          const adjustedPage = Math.min(currentPage, newTotalPages);
-
-          if (adjustedPage !== currentPage) {
-            setCurrentPage(adjustedPage);
-            loadData(dashboardFilters, adjustedPage, pageSize);
-          } else {
-            loadData(dashboardFilters, currentPage, pageSize);
-          }
-
+          loadData(dashboardFiltersRef.current, currentPageRef.current, pageSizeRef.current);
           setConfirmDialog(prev => ({ ...prev, isOpen: false, isLoading: false }));
           showToast(`${count} 条热点已删除`, 'success');
         } catch (error) {
-          setSelectedHotspots(previousSelectedHotspots);
           setConfirmDialog(prev => ({ ...prev, isLoading: false }));
           console.error('批量删除热点失败:', error);
           showToast('批量删除失败', 'error');
@@ -425,7 +410,8 @@ function App() {
       const result = await hotspotsApi.search(searchQuery);
       setSearchResults(result.results);
       showToast(`找到 ${result.results.length} 条结果`, 'success');
-    } catch {
+    } catch (error) {
+      logError(error, 'Search');
       showToast('搜索失败', 'error');
     } finally {
       setIsLoading(false);
@@ -445,9 +431,10 @@ function App() {
       showToast('热点检查已触发', 'success');
 
       setTimeout(() => {
-        loadData(dashboardFilters, currentPage, pageSize);
+        loadData(dashboardFiltersRef.current, currentPageRef.current, pageSizeRef.current);
       }, NAVIGATION_DELAY_MS * 10); // 5000ms
-    } catch {
+    } catch (error) {
+      logError(error, 'ManualCheck');
       showToast('触发失败', 'error');
     } finally {
       setIsChecking(false);
@@ -456,40 +443,28 @@ function App() {
 
   // 标记单条通知为已读
   const handleMarkAsRead = async (id: string) => {
-    const previousNotifications = notifications;
-    const previousUnreadCount = unreadCount;
     try {
       await notificationsApi.markAsRead(id);
       setUnreadCount(prev => Math.max(0, prev - 1));
       setNotifications(prev => prev.map(n => n.id === id ? { ...n, isRead: true } : n));
     } catch (error) {
-      setUnreadCount(previousUnreadCount);
-      setNotifications(previousNotifications);
       console.error('Failed to mark notification as read:', error);
     }
   };
 
   // 标记所有通知为已读
   const handleMarkAllRead = async () => {
-    const previousUnreadCount = unreadCount;
-    const previousNotifications = notifications;
     try {
       await notificationsApi.markAllAsRead();
       setUnreadCount(0);
       setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
     } catch (error) {
-      setUnreadCount(previousUnreadCount);
-      setNotifications(previousNotifications);
       console.error('Failed to mark all as read:', error);
     }
   };
 
   // 删除单条通知
   const handleDeleteNotification = async (id: string) => {
-    const previousNotifications = notifications;
-    const notification = notifications.find(n => n.id === id);
-    const previousUnreadCount = unreadCount;
-    
     setConfirmDialog({
       isOpen: true,
       title: '删除通知',
@@ -507,11 +482,8 @@ function App() {
             return prev.filter(n => n.id !== id);
           });
           setConfirmDialog(prev => ({ ...prev, isOpen: false, isLoading: false }));
+          showToast('通知已删除', 'success');
         } catch (error) {
-          setNotifications(previousNotifications);
-          if (notification && !notification.isRead) {
-            setUnreadCount(previousUnreadCount);
-          }
           setConfirmDialog(prev => ({ ...prev, isLoading: false }));
           console.error('删除通知失败:', error);
         }
@@ -521,9 +493,6 @@ function App() {
 
   // 清空所有通知
   const handleClearAllNotifications = async () => {
-    const previousNotifications = notifications;
-    const previousUnreadCount = unreadCount;
-    
     setConfirmDialog({
       isOpen: true,
       title: '清空通知',
@@ -538,8 +507,6 @@ function App() {
           setShowNotifications(false);
           setConfirmDialog(prev => ({ ...prev, isOpen: false, isLoading: false }));
         } catch (error) {
-          setNotifications(previousNotifications);
-          setUnreadCount(previousUnreadCount);
           setConfirmDialog(prev => ({ ...prev, isLoading: false }));
           console.error('清空通知失败:', error);
         }
@@ -556,7 +523,7 @@ function App() {
       const data = await notificationsApi.getAll({ page: newPage, limit: 20 });
       setNotifications(prev => {
         const existingIds = new Set(prev.map(n => n.id));
-        const newNotifications = (data.data as unknown[]).map(toNotification).filter(n => !existingIds.has(n.id));
+        const newNotifications = data.data.map((item: NotificationData) => toNotification(item)).filter(n => !existingIds.has(n.id));
         return [...prev, ...newNotifications];
       });
       setNotificationPage(newPage);
@@ -732,43 +699,43 @@ function App() {
   };
 
   // 处理页码变化
-  const handlePageChange = (page: number) => {
+  const handlePageChange = useCallback((page: number) => {
     setCurrentPage(page);
     window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
+  }, []);
 
   // 处理页面大小变化
-  const handlePageSizeChange = (size: number) => {
+  const handlePageSizeChange = useCallback((size: number) => {
     setPageSize(size);
-  };
+  }, []);
 
   // 展开/折叠相关性理由
-  const toggleReason = (id: string) => {
+  const toggleReason = useCallback((id: string) => {
     setExpandedReasons(prev => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id); else next.add(id);
       return next;
     });
-  };
+  }, []);
 
   // 展开/折叠原始内容
-  const toggleContent = (id: string) => {
+  const toggleContent = useCallback((id: string) => {
     setExpandedContents(prev => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id); else next.add(id);
       return next;
     });
-  };
+  }, []);
 
   // 一键展开/折叠所有相关性理由
-  const toggleAllReasons = (list: Hotspot[]) => {
+  const toggleAllReasons = useCallback((list: Hotspot[]) => {
     if (allReasonsExpanded) {
       setExpandedReasons(new Set());
     } else {
       setExpandedReasons(new Set(list.filter(h => h.relevanceReason).map(h => h.id)));
     }
-    setAllReasonsExpanded(!allReasonsExpanded);
-  };
+    setAllReasonsExpanded(prev => !prev);
+  }, [allReasonsExpanded]);
 
   // Client-side filtering/sorting for search results
   const filteredSearchResults = useFilteredHotspots({
@@ -1086,7 +1053,7 @@ function App() {
                       key={hotspot.id}
                       initial={{ opacity: 0, x: -10 }}
                       animate={{ opacity: 1, x: 0 }}
-                      transition={{ delay: index * 0.03 }}
+                      transition={{ delay: Math.min(index * 0.03, 0.3) }}
                       className={cn(
                         "group p-5 rounded-2xl border transition-all",
                         isSelected 
@@ -1510,7 +1477,7 @@ function App() {
                     initial={{ opacity: 0, scale: 0.9 }}
                     animate={{ opacity: 1, scale: 1 }}
                     exit={{ opacity: 0, scale: 0.9 }}
-                    transition={{ delay: i * 0.02 }}
+                    transition={{ delay: Math.min(i * 0.02, 0.2) }}
                     className={cn(
                       "group p-4 rounded-xl border transition-all",
                       keyword.isActive 
@@ -1636,7 +1603,7 @@ function App() {
                   key={hotspot.id} 
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: i * 0.03 }}
+                  transition={{ delay: Math.min(i * 0.03, 0.3) }}
                   className="group p-5 rounded-2xl bg-white/[0.02] hover:bg-white/[0.04] border border-white/5 transition-all"
                 >
                   <div className="flex items-start justify-between gap-4">

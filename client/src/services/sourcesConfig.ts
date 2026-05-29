@@ -1,8 +1,47 @@
 import React from 'react';
 import { Twitter, Eye, MessageCircle, Search, Zap, Globe, Activity } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
+import { getAuthHeaders } from '../utils/auth';
 
 const API_BASE = '/api';
+const DEFAULT_TIMEOUT_MS = 30000;
+
+async function request<T>(endpoint: string): Promise<T> {
+  const authHeaders = getAuthHeaders();
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
+  
+  try {
+    const response = await fetch(`${API_BASE}${endpoint}`, {
+      headers: {
+        'Content-Type': 'application/json',
+        ...authHeaders,
+      },
+      signal: controller.signal,
+    });
+    
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      let errorMessage = `请求失败 (${response.status})`;
+      try {
+        const errorData = await response.json();
+        errorMessage = errorData.error || errorData.message || errorMessage;
+      } catch {
+        // ignore json parse error
+      }
+      throw new Error(errorMessage);
+    }
+
+    return response.json();
+  } catch (error) {
+    clearTimeout(timeoutId);
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error('请求超时，请稍后重试');
+    }
+    throw error;
+  }
+}
 
 export interface SourceConfig {
   id: string;
@@ -64,55 +103,16 @@ export function getSourceIcon(sourceId: string, className: string = 'w-4 h-4'): 
 
 export async function fetchSourcesConfig(enabled?: boolean): Promise<SourceConfig[]> {
   const endpoint = enabled ? '/sources/config?enabled=true' : '/sources/config';
-  const response = await fetch(`${API_BASE}${endpoint}`);
-
-  if (!response.ok) {
-    let errorMessage = `获取来源配置失败 (${response.status})`;
-    try {
-      const errorData = await response.json();
-      errorMessage = errorData.error || errorData.message || errorMessage;
-    } catch {
-      // ignore json parse error
-    }
-    throw new Error(errorMessage);
-  }
-
-  const result: SourceConfigResponse = await response.json();
+  const result = await request<SourceConfigResponse>(endpoint);
   return result.data;
 }
 
 export async function fetchSourceTypes(): Promise<SourceTypeConfig> {
-  const response = await fetch(`${API_BASE}/sources/types`);
-
-  if (!response.ok) {
-    let errorMessage = `获取来源类型失败 (${response.status})`;
-    try {
-      const errorData = await response.json();
-      errorMessage = errorData.error || errorData.message || errorMessage;
-    } catch {
-      // ignore json parse error
-    }
-    throw new Error(errorMessage);
-  }
-
-  const result = await response.json();
+  const result = await request<{ data: SourceTypeConfig }>('/sources/types');
   return result.data;
 }
 
 export async function fetchSourcesByType(type: string): Promise<SourceConfig[]> {
-  const response = await fetch(`${API_BASE}/sources/config?type=${type}`);
-
-  if (!response.ok) {
-    let errorMessage = `按类型获取来源失败 (${response.status})`;
-    try {
-      const errorData = await response.json();
-      errorMessage = errorData.error || errorData.message || errorMessage;
-    } catch {
-      // ignore json parse error
-    }
-    throw new Error(errorMessage);
-  }
-
-  const result: SourceConfigResponse = await response.json();
+  const result = await request<SourceConfigResponse>(`/sources/config?type=${type}`);
   return result.data;
 }

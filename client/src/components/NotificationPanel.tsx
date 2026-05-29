@@ -107,7 +107,7 @@ export default function NotificationPanel({
       initial={{ opacity: 0, y: 8, scale: 0.96 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
       exit={{ opacity: 0, y: 8, scale: 0.96 }}
-      className="absolute right-0 top-14 w-[420px] bg-gradient-to-b from-[#0a0a1a] to-[#0f0f23]/95 backdrop-blur-2xl rounded-2xl border border-white/10 shadow-2xl overflow-hidden notification-panel"
+      className="absolute right-0 top-14 w-full max-w-[420px] sm:w-[420px] bg-gradient-to-b from-[#0a0a1a] to-[#0f0f23]/95 backdrop-blur-2xl rounded-2xl border border-white/10 shadow-2xl overflow-hidden notification-panel"
     >
       {/* Header */}
       <div className="border-b border-white/5 notification-panel-border">

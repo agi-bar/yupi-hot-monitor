@@ -12,6 +12,10 @@ const DEDUP_CACHE_PREFIX = 'hotspot:dedup:';
 const DELETE_CACHE_BASE = 30 * 24 * 60 * 60;
 const DELETE_CACHE_JITTER = 24 * 60 * 60;
 
+function generateDeleteCacheTTL(): number {
+  return DELETE_CACHE_BASE + Math.floor(Math.random() * DELETE_CACHE_JITTER);
+}
+
 // 获取所有热点
 router.get('/', async (req, res) => {
   try {
@@ -315,9 +319,8 @@ router.delete('/:id', async (req, res) => {
     try {
       const cacheKey = `${DEDUP_CACHE_PREFIX}${hotspot.source}:${hotspot.title}`;
       const existingTTL = await getRedis().ttl(cacheKey);
-      // 如果缓存不存在或剩余时间少于30天，则设置为30天±随机
       if (existingTTL < 0 || existingTTL < DELETE_CACHE_BASE) {
-        const cacheTTL = DELETE_CACHE_BASE + Math.floor(Math.random() * DELETE_CACHE_JITTER);
+        const cacheTTL = generateDeleteCacheTTL();
         await getRedis().setex(cacheKey, cacheTTL, 'deleted');
         console.log(`[Hotspots API] Set permanent dedup cache (${(cacheTTL/86400).toFixed(0)} days) for: ${hotspot.source}:${hotspot.title.slice(0, 30)}...`);
       }
@@ -351,25 +354,23 @@ router.post('/batch-delete', async (req, res) => {
       });
     }
 
-    // 先查询所有要删除的记录
-    const hotspotsToDelete = await prisma.hotspot.findMany({
-      where: { id: { in: ids } },
-      select: { source: true, title: true }
-    });
-
-    // 删除数据库记录
-    const result = await prisma.hotspot.deleteMany({
-      where: { id: { in: ids } }
-    });
+    // ✅ 使用事务确保查询和删除的原子性，避免数据不一致
+    const [hotspotsToDelete, result] = await prisma.$transaction([
+      prisma.hotspot.findMany({
+        where: { id: { in: ids } },
+        select: { source: true, title: true }
+      }),
+      prisma.hotspot.deleteMany({
+        where: { id: { in: ids } }
+      })
+    ]);
 
     // ✅ 批量设置去重缓存（30天±随机），确保删除的数据永远不会再被抓取
     try {
       const pipeline = getRedis().pipeline();
       for (const hotspot of hotspotsToDelete) {
         const cacheKey = `${DEDUP_CACHE_PREFIX}${hotspot.source}:${hotspot.title}`;
-        // 使用带随机抖动的过期时间，防止缓存雪崩
-        const cacheTTL = DELETE_CACHE_BASE + Math.floor(Math.random() * DELETE_CACHE_JITTER);
-        pipeline.setex(cacheKey, cacheTTL, 'deleted');
+        pipeline.setex(cacheKey, generateDeleteCacheTTL(), 'deleted');
       }
       await pipeline.exec();
       console.log(`[Hotspots API] Set ${hotspotsToDelete.length} permanent dedup cache entries (${(DELETE_CACHE_BASE/86400).toFixed(0)}±${(DELETE_CACHE_JITTER/86400).toFixed(0)} days)`);

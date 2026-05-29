@@ -13,6 +13,7 @@ import ConfirmDialog from './ConfirmDialog';
 import {
   SOURCE_STATUS_OPTIONS
 } from '@hot-monitor/types';
+import { logError } from '../utils/errorHandler';
 
 type Source = ApiSource;
 type SourceStats = { totalRequests: number; successCount: number; errorCount: number };
@@ -85,7 +86,8 @@ export default function SourcesManager({ onSourceSelect }: SourcesManagerProps) 
       setSources(data.data);
       setStats(data.stats);
       setTotalPages(data.pagination.totalPages);
-    } catch {
+    } catch (error) {
+      logError(error, 'LoadSources');
       showToast('加载来源失败', 'error');
     } finally {
       setIsLoading(false);
@@ -142,7 +144,8 @@ export default function SourcesManager({ onSourceSelect }: SourcesManagerProps) 
       a.click();
       URL.revokeObjectURL(url);
       showToast('导出成功', 'success');
-    } catch {
+    } catch (error) {
+      logError(error, 'ExportSources');
       showToast('导出失败', 'error');
     } finally {
       setIsExporting(false);
@@ -226,7 +229,8 @@ export default function SourcesManager({ onSourceSelect }: SourcesManagerProps) 
           setSources(prev => prev.filter(s => !idsToDelete.has(s.id)));
           setConfirmDialog(prev => ({ ...prev, isOpen: false, isLoading: false }));
           showToast('批量删除成功', 'success');
-        } catch {
+        } catch (error) {
+          logError(error, 'BatchDeleteSources');
           setConfirmDialog(prev => ({ ...prev, isLoading: false }));
           showToast('批量删除失败', 'error');
         }

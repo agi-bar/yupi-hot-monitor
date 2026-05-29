@@ -88,18 +88,16 @@ export function sortHotspots<T extends SortableHotspot>(
 
       case 'importance': {
         result = compareImportance(a, b);
-        // 重要性相同时，按创建时间倒序兜底
+        // 重要性相同时，按创建时间排序作为次要条件
         if (result === 0) {
           result = toTimestamp(a.createdAt) - toTimestamp(b.createdAt);
-          // 对兜底时间也应用 desc
-          return desc ? -(result) : result;
         }
         // importance 的 "desc" 含义是"最重要在前"
         // IMPORTANCE_ORDER 已经是 urgent=0 < low=3
         // 所以 result < 0 意味着 a 更重要
-        // desc 时我们要 a 在前，即返回负数 → 直接返回 result
-        // asc 时我们要 a 在后，即返回正数 → 返回 -result
-        return desc ? result : -result;
+        // desc 时我们要 a 在前，即返回负数 → 返回 -result
+        // asc 时我们要 a 在后，即返回正数 → 返回 result
+        return desc ? -result : result;
       }
 
       case 'relevance':

@@ -61,9 +61,8 @@ export function sortHotspots<T extends SortableHotspot>(
         result = compareImportance(a, b);
         if (result === 0) {
           result = toTimestamp(a.createdAt) - toTimestamp(b.createdAt);
-          return desc ? -(result) : result;
         }
-        return desc ? result : -result;
+        return desc ? -result : result;
       }
 
       case 'relevance':

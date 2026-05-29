@@ -5,10 +5,12 @@ import {
   ChevronDown, Check, RotateCcw
 } from 'lucide-react';
 import { cn } from '../lib/utils';
-import type { Keyword } from '../services/api';
+import type { KeywordWithStats } from '../services/api';
 import { useSourceOptions } from '../hooks/useSourcesConfig';
 import { defaultFilterState, type FilterState } from '../constants/filters';
 import { countActiveFilters, isActiveFilter } from '../utils/filterUtils';
+
+type Keyword = KeywordWithStats;
 
 interface FilterSortBarProps {
   filters: FilterState;
@@ -182,9 +184,7 @@ export default function FilterSortBar({ filters, onChange, keywords }: FilterSor
 
   return (
     <div className="space-y-3">
-      {/* Main Bar: Sort + Filter Toggle */}
       <div className="flex items-center gap-2 flex-wrap">
-        {/* Sort Selector */}
         <div className="flex items-center gap-1 bg-white/[0.03] rounded-xl border border-white/5 p-1">
           <ArrowUpDown className="w-3.5 h-3.5 text-slate-600 ml-2" />
           {SORT_OPTIONS.map((opt) => {
@@ -207,7 +207,6 @@ export default function FilterSortBar({ filters, onChange, keywords }: FilterSor
           })}
         </div>
 
-        {/* Active Filter Tags */}
         {activeFilterCount > 0 && !showFilters && (
           <div className="flex items-center gap-1.5 flex-wrap">
             {filters.source && (
@@ -243,7 +242,6 @@ export default function FilterSortBar({ filters, onChange, keywords }: FilterSor
           </div>
         )}
 
-        {/* Quick Filter Presets */}
         {QUICK_FILTER_PRESETS.map((preset, idx) => (
           <button
             key={idx}
@@ -259,7 +257,6 @@ export default function FilterSortBar({ filters, onChange, keywords }: FilterSor
           </button>
         ))}
 
-        {/* Filter Toggle */}
         <button
           onClick={() => setShowFilters(!showFilters)}
           className={cn(
@@ -278,18 +275,17 @@ export default function FilterSortBar({ filters, onChange, keywords }: FilterSor
           )}
         </button>
 
-        {/* Reset Button */}
         {activeFilterCount > 0 && (
           <button
             onClick={resetFilters}
             className="flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs text-slate-500 hover:text-slate-300 transition-all"
+            title="重置筛选条件（保留排序方式）"
           >
             <RotateCcw className="w-3 h-3" />
           </button>
         )}
       </div>
 
-      {/* Expanded Filters */}
       <AnimatePresence>
         {showFilters && (
           <motion.div

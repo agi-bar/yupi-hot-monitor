@@ -8,7 +8,10 @@ const DEDUP_CACHE_PREFIX = 'hotspot:dedup:';
 // 删除热点缓存过期时间：30天（添加随机抖动±1天防止缓存雪崩）
 const DELETE_CACHE_BASE = 30 * 24 * 60 * 60;
 const DELETE_CACHE_JITTER = 24 * 60 * 60;
-const DELETE_CACHE_SECONDS = DELETE_CACHE_BASE + Math.floor(Math.random() * DELETE_CACHE_JITTER);
+
+function generateDeleteCacheTTL(): number {
+  return DELETE_CACHE_BASE + Math.floor(Math.random() * DELETE_CACHE_JITTER);
+}
 
 interface CleanupResult {
   table: string;
@@ -210,9 +213,7 @@ class DuplicateCleanupJob {
           const pipeline = getRedis().pipeline();
           for (const hotspot of hotspotsToDelete) {
             const cacheKey = `${DEDUP_CACHE_PREFIX}${hotspot.source}:${hotspot.title}`;
-            // 使用带随机抖动的过期时间，防止缓存雪崩
-            const cacheTTL = DELETE_CACHE_BASE + Math.floor(Math.random() * DELETE_CACHE_JITTER);
-            pipeline.setex(cacheKey, cacheTTL, 'deleted');
+            pipeline.setex(cacheKey, generateDeleteCacheTTL(), 'deleted');
           }
           await pipeline.exec();
           logInfo('DuplicateCleanupJob', 

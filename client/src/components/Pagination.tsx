@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { cn } from '../lib/utils';
 
@@ -10,7 +11,7 @@ interface PaginationProps {
   onPageSizeChange: (size: number) => void;
 }
 
-const PAGE_SIZE_OPTIONS = [5, 10, 20, 50, 100];
+const PAGE_SIZE_OPTIONS = [5, 10, 20, 50, 100] as const;
 
 export default function Pagination({
   currentPage,
@@ -22,7 +23,7 @@ export default function Pagination({
 }: PaginationProps) {
   if (totalPages <= 1) return null;
 
-  const renderPageNumbers = () => {
+  const pageNumbers = useMemo(() => {
     const pages: (number | string)[] = [];
     const maxVisible = 7;
 
@@ -55,7 +56,7 @@ export default function Pagination({
     }
 
     return pages;
-  };
+  }, [currentPage, totalPages]);
 
   return (
     <div className="flex items-center justify-between px-4 py-3 border-t border-white/5">
@@ -92,7 +93,7 @@ export default function Pagination({
         </button>
 
         <div className="flex items-center gap-1.5">
-          {renderPageNumbers().map((page, index) => (
+          {pageNumbers.map((page, index) => (
             typeof page === 'number' ? (
               <button
                 key={page}

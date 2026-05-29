@@ -1,0 +1,10 @@
+export const MAX_HOTSPOTS_DISPLAY = 20;
+export const MAX_NOTIFICATIONS_DISPLAY = 20;
+export const NAVIGATION_DELAY_MS = 500;
+export const API_NOTIFICATIONS_LIMIT = 20;
+export const TOAST_DURATION_MS = 3000;
+export const API_TIMEOUT_MS = 30000;
+export const WS_RECONNECT_MAX_ATTEMPTS = 10;
+export const WS_RECONNECT_BASE_DELAY = 1000;
+export const WS_RECONNECT_MAX_DELAY = 10000;
+export const WS_TIMEOUT = 20000;
