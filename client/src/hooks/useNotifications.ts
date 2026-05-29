@@ -71,14 +71,14 @@ export function useNotifications(options: UseNotificationsOptions = {}) {
   }, []);
 
   const deleteNotification = useCallback((id: string) => {
-    const notification = notifications.find(n => n.id === id);
-    
-    setNotifications(prev => prev.filter(n => n.id !== id));
-    
-    if (notification && !notification.isRead) {
-      setUnreadCount(prev => Math.max(0, prev - 1));
-    }
-  }, [notifications]);
+    setNotifications(prev => {
+      const notification = prev.find(n => n.id === id);
+      if (notification && !notification.isRead) {
+        setUnreadCount(c => Math.max(0, c - 1));
+      }
+      return prev.filter(n => n.id !== id);
+    });
+  }, []);
 
   const clearAll = useCallback(() => {
     if (debounceTimer.current) {

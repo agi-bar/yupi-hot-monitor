@@ -12,7 +12,7 @@ import {
   keywordsApi, hotspotsApi, notificationsApi, triggerHotspotCheck,
   type Keyword, type Hotspot, type Stats
 } from './services/api';
-import { onNewHotspot, onNotification, subscribeToKeywords } from './services/socket';
+import { onNewHotspot, onNotification, subscribeToKeywords, unsubscribeFromKeywords } from './services/socket';
 import { 
   NOTIFICATION_MAX_DISPLAY_COUNT,
   NOTIFICATION_MAX_LENGTH,
@@ -63,14 +63,23 @@ function getHeatLevel(score: number): { label: string; color: string } {
 
 function App() {
   useTheme();
-  
+
+  // 魔法数字常量
+  const MAX_HOTSPOTS_DISPLAY = 20;
+  const MAX_NOTIFICATIONS_DISPLAY = 20;
+  const NAVIGATION_DELAY_MS = 500;
+  const API_NOTIFICATIONS_LIMIT = 20;
+
   const [keywords, setKeywords] = useState<Keyword[]>([]);
   const [hotspots, setHotspots] = useState<Hotspot[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const notificationsRef = useRef(notifications);
   const [unreadCount, setUnreadCount] = useState(0);
-  
+  const isInitialLoad = useRef(true);
+  const previousFiltersRef = useRef<FilterState | null>(null);
+  const currentKeywordsRef = useRef<string[]>([]);
+
   const [newKeyword, setNewKeyword] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(true);
@@ -85,14 +94,12 @@ function App() {
   const [totalPages, setTotalPages] = useState(1);
   const [total, setTotal] = useState(0);
   const [searchResults, setSearchResults] = useState<Hotspot[]>([]);
-  // 展开/折叠状态
   const [expandedReasons, setExpandedReasons] = useState<Set<string>>(new Set());
-  const [expandedContents, setExpandedContents] = useState<Set<string>>(new Set()); // 原始内容默认展开
+  const [expandedContents, setExpandedContents] = useState<Set<string>>(new Set());
   const [allReasonsExpanded, setAllReasonsExpanded] = useState(false);
-  // 热点选择状态
   const [selectedHotspots, setSelectedHotspots] = useState<Set<string>>(new Set());
+  const [dataLoaded, setDataLoaded] = useState(false);
 
-  // 确认对话框状态
   const [confirmDialog, setConfirmDialog] = useState<{
     isOpen: boolean;
     title: string;
@@ -107,28 +114,26 @@ function App() {
     onConfirm: () => {}
   });
 
-  // 热点跳转状态
   const [navigatingHotspotId, setNavigatingHotspotId] = useState<string | null>(null);
 
-  // 加载数据
-  const loadData = useCallback(async () => {
+  // 加载数据 - 使用 useRef 存储最新值，避免依赖循环
+  const loadData = useCallback(async (filters: FilterState, page: number, size: number) => {
     setIsLoading(true);
     try {
       const filterParams = {
-        ...buildFilterParams(dashboardFilters),
-        limit: pageSize,
-        page: currentPage,
+        ...buildFilterParams(filters),
+        limit: size,
+        page: page,
       };
 
       const [keywordsData, hotspotsData, statsData, notifData] = await Promise.all([
         keywordsApi.getAll(),
         hotspotsApi.getAll(filterParams as Record<string, string | number>),
         hotspotsApi.getStats(),
-        notificationsApi.getAll({ limit: 20 })
+        notificationsApi.getAll({ limit: API_NOTIFICATIONS_LIMIT })
       ]);
       setKeywords(keywordsData);
       setHotspots(hotspotsData.data);
-      // 自动展开所有原始内容
       setExpandedContents(new Set(hotspotsData.data.map((h: Hotspot) => h.id)));
       setTotalPages(hotspotsData.pagination.totalPages);
       setTotal(hotspotsData.pagination.total);
@@ -137,50 +142,36 @@ function App() {
       setUnreadCount(notifData.unreadCount);
       setNotificationPage(1);
       setHasMoreNotifications(notifData.pagination.page < notifData.pagination.totalPages);
+      setDataLoaded(true);
 
-      // 订阅关键词
       const activeKeywords = keywordsData.filter(k => k.isActive).map(k => k.text);
       if (activeKeywords.length > 0) {
+        if (currentKeywordsRef.current.length > 0) {
+          unsubscribeFromKeywords(currentKeywordsRef.current);
+        }
         subscribeToKeywords(activeKeywords);
+        currentKeywordsRef.current = activeKeywords;
       }
     } catch (error) {
       console.error('Failed to load data:', error);
     } finally {
       setIsLoading(false);
     }
-  }, [dashboardFilters, currentPage, pageSize]);
+  }, []);
 
-  // 当筛选条件变化时重置页码
-  useEffect(() => {
-    setCurrentPage(1);
-    // 更新 URL 参数
-    const url = new URL(window.location.href);
-    url.searchParams.set('page', '1');
-    window.history.replaceState({}, '', url.toString());
-  }, [dashboardFilters]);
-
-  // 页面大小变化时重置页码
-  useEffect(() => {
-    setCurrentPage(1);
-    // 更新 URL 参数
-    const url = new URL(window.location.href);
-    url.searchParams.set('page', '1');
-    window.history.replaceState({}, '', url.toString());
-  }, [pageSize]);
-
-  // 从 URL 初始化分页参数
+  // 从 URL 初始化分页参数（仅首次加载时）
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const page = params.get('page');
     const size = params.get('pageSize');
-    
+
     if (page) {
       const pageNum = parseInt(page);
       if (!isNaN(pageNum) && pageNum > 0) {
         setCurrentPage(pageNum);
       }
     }
-    
+
     if (size) {
       const sizeNum = parseInt(size);
       if (!isNaN(sizeNum) && [5, 10, 20, 50, 100].includes(sizeNum)) {
@@ -189,35 +180,41 @@ function App() {
     }
   }, []);
 
-  // 页码变化时更新 URL
+  // 筛选条件或页码变化时重新加载数据
   useEffect(() => {
+    if (isInitialLoad.current) {
+      isInitialLoad.current = false;
+      loadData(dashboardFilters, currentPage, pageSize);
+      previousFiltersRef.current = dashboardFilters;
+      return;
+    }
+
+    if (previousFiltersRef.current !== dashboardFilters || dataLoaded) {
+      previousFiltersRef.current = dashboardFilters;
+      loadData(dashboardFilters, currentPage, pageSize);
+    }
+  }, [dashboardFilters, currentPage, pageSize, loadData, dataLoaded]);
+
+  // 统一的 URL 更新逻辑
+  useEffect(() => {
+    if (isInitialLoad.current) return;
     const url = new URL(window.location.href);
     url.searchParams.set('page', currentPage.toString());
-    window.history.replaceState({}, '', url.toString());
-  }, [currentPage]);
-
-  // 页面大小变化时更新 URL
-  useEffect(() => {
-    const url = new URL(window.location.href);
     url.searchParams.set('pageSize', pageSize.toString());
     window.history.replaceState({}, '', url.toString());
-  }, [pageSize]);
+  }, [currentPage, pageSize]);
 
   // 同步notifications到ref
   useEffect(() => {
     notificationsRef.current = notifications;
   }, [notifications]);
 
-  useEffect(() => {
-    loadData();
-  }, [loadData]);
-
   // WebSocket 事件
   useEffect(() => {
     const unsubHotspot = onNewHotspot((hotspot) => {
-      setHotspots(prev => [hotspot as Hotspot, ...prev.slice(0, 19)]);
+      setHotspots(prev => [hotspot as Hotspot, ...prev.slice(0, MAX_HOTSPOTS_DISPLAY - 1)]);
       showToast('发现新热点: ' + hotspot.title.slice(0, NOTIFICATION_MAX_LENGTH.TITLE), 'success');
-      loadData();
+      loadData(dashboardFilters, currentPage, pageSize);
     });
 
     const unsubNotif = onNotification((notification) => {
@@ -230,13 +227,13 @@ function App() {
         createdAt: new Date().toISOString(),
         hotspotId: notification.hotspotId,
       };
-      
-      const exists = notificationsRef.current.some(n => 
-        notification.hotspotId && n.hotspotId === notification.hotspotId
+
+      const exists = notificationsRef.current.some(n =>
+        notification.hotspotId && n.hotspotId === notification.hotspotId && n.type === notification.type
       );
       if (!exists) {
         setUnreadCount(c => c + 1);
-        setNotifications(prev => [newNotification, ...prev.slice(0, 19)]);
+        setNotifications(prev => [newNotification, ...prev.slice(0, MAX_NOTIFICATIONS_DISPLAY - 1)]);
       }
       showToast(`新通知: ${notification.title.slice(0, NOTIFICATION_MAX_LENGTH.TITLE - 5)}...`, 'success');
     });
@@ -245,7 +242,7 @@ function App() {
       unsubHotspot();
       unsubNotif();
     };
-  }, [loadData]);
+  }, [loadData, dashboardFilters, currentPage, pageSize]);
 
   const showToast = (message: string, type: 'success' | 'error') => {
     setToast({ message, type });
@@ -344,7 +341,7 @@ function App() {
           await deletePromise;
           
           // 删除成功后重新加载数据
-          await loadData();
+          loadData(dashboardFilters, currentPage, pageSize);
           
           setConfirmDialog(prev => ({ ...prev, isOpen: false, isLoading: false }));
           showToast('热点已删除', 'success');
@@ -363,6 +360,7 @@ function App() {
     
     const selectedIds = Array.from(selectedHotspots);
     const count = selectedIds.length;
+    const deletedCount = count;
     
     setConfirmDialog({
       isOpen: true,
@@ -370,10 +368,22 @@ function App() {
       message: `确定要删除选中的 ${count} 条热点数据吗？此操作无法撤销。`,
       onConfirm: async () => {
         setConfirmDialog(prev => ({ ...prev, isLoading: true }));
+        
         try {
           await hotspotsApi.batchDelete(selectedIds);
           setSelectedHotspots(new Set());
-          await loadData();
+          
+          // 计算删除后的新总页数
+          const remainingCount = total - deletedCount;
+          const newTotalPages = Math.max(1, Math.ceil(remainingCount / pageSize));
+          const adjustedPage = Math.min(currentPage, newTotalPages);
+          
+          // 如果页码超出范围，调整到有效范围
+          if (adjustedPage !== currentPage) {
+            setCurrentPage(adjustedPage);
+          }
+
+          loadData(dashboardFilters, adjustedPage !== currentPage ? adjustedPage : currentPage, pageSize);
           setConfirmDialog(prev => ({ ...prev, isOpen: false, isLoading: false }));
           showToast(`${count} 条热点已删除`, 'success');
         } catch (error) {
@@ -435,10 +445,10 @@ function App() {
     try {
       await triggerHotspotCheck();
       showToast('热点检查已触发', 'success');
-      
+
       setTimeout(() => {
-        loadData();
-      }, 5000);
+        loadData(dashboardFilters, currentPage, pageSize);
+      }, NAVIGATION_DELAY_MS * 10); // 5000ms
     } catch {
       showToast('触发失败', 'error');
     } finally {
@@ -551,57 +561,57 @@ function App() {
   const navigateToHotspot = async (hotspotId: string) => {
     setShowNotifications(false);
     setNavigatingHotspotId(hotspotId);
-    
+
     try {
-      // 首先在当前页面的热点列表中查找
       const localHotspot = hotspots.find(h => h.id === hotspotId);
-      
+
       if (localHotspot) {
-        // 热点在当前页面，直接滚动到对应位置
         scrollToHotspotElement(hotspotId);
       } else {
-        // 热点不在当前页面，需要切换到对应页面
         showToast(`正在定位热点...`, 'success');
-        
-        // 通过 API 查找热点所在页面
+
         const hotspot = await hotspotsApi.getById(hotspotId);
-        
+
         if (!hotspot) {
           showToast(`热点不存在或已被删除`, 'error');
           return;
         }
-        
-        // 计算热点所在的页码
-        // 使用热点列表查询来找到对应的页码
+
         const targetPage = await findHotspotPage(hotspotId);
-        
+
         if (targetPage === -1) {
           showToast(`未找到热点，可能已被删除`, 'error');
           return;
         }
-        
-        // 切换到目标页面
+
         if (targetPage !== currentPage) {
+          setDataLoaded(false);
           setCurrentPage(targetPage);
-          // 更新 URL
-          const url = new URL(window.location.href);
-          url.searchParams.set('page', targetPage.toString());
-          window.history.replaceState({}, '', url.toString());
-          
-          // 等待数据加载完成后再滚动
-          await new Promise(resolve => setTimeout(resolve, 500));
         }
-        
-        // 滚动到对应位置
-        scrollToHotspotElement(hotspotId);
       }
     } catch (error) {
       console.error('导航到热点失败:', error);
       showToast(`定位热点失败`, 'error');
     } finally {
-      setNavigatingHotspotId(null);
+      setTimeout(() => setNavigatingHotspotId(null), NAVIGATION_DELAY_MS);
     }
   };
+
+  // 监听数据加载完成后滚动到目标热点
+  useEffect(() => {
+    if (dataLoaded && navigatingHotspotId) {
+      const element = document.getElementById(`hotspot-${navigatingHotspotId}`);
+      if (element) {
+        setTimeout(() => {
+          element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          element.classList.add('ring-2', 'ring-blue-500', 'animate-pulse');
+          setTimeout(() => {
+            element.classList.remove('ring-2', 'ring-blue-500', 'animate-pulse');
+          }, 3000);
+        }, NAVIGATION_DELAY_MS);
+      }
+    }
+  }, [dataLoaded, navigatingHotspotId]);
 
   // 滚动到热点元素
   const scrollToHotspotElement = (hotspotId: string) => {
@@ -618,49 +628,93 @@ function App() {
   // 查找热点所在的页码
   const findHotspotPage = async (hotspotId: string): Promise<number> => {
     try {
-      // 使用二分查找优化页码搜索
+      const sortBy = dashboardFilters.sortBy || 'createdAt';
+      const sortOrder = dashboardFilters.sortOrder || 'desc';
+      const isDesc = sortOrder === 'desc';
+
+      // 先获取热点数据以确定其排序字段值
+      const hotspot = await hotspotsApi.getById(hotspotId);
+      if (!hotspot) return -1;
+
+      let targetValue: number | string;
+      if (sortBy === 'createdAt') {
+        targetValue = new Date(hotspot.createdAt).getTime();
+      } else if (sortBy === 'publishedAt') {
+        targetValue = hotspot.publishedAt ? new Date(hotspot.publishedAt).getTime() : 0;
+      } else if (sortBy === 'relevance') {
+        targetValue = hotspot.relevance;
+      } else if (sortBy === 'importance') {
+        const importanceOrder: Record<string, number> = { urgent: 0, high: 1, medium: 2, low: 3 };
+        targetValue = importanceOrder[hotspot.importance] ?? 4;
+      } else {
+        // 对于其他排序方式，使用线性搜索
+        for (let page = 1; page <= totalPages; page++) {
+          const pageData = await hotspotsApi.getAll({
+            page,
+            limit: pageSize,
+            ...buildFilterParams(dashboardFilters)
+          });
+          const foundIndex = pageData.data.findIndex(h => h.id === hotspotId);
+          if (foundIndex !== -1) return page;
+        }
+        return -1;
+      }
+
+      // 使用二分查找
       let low = 1;
       let high = totalPages;
-      
+
       while (low <= high) {
         const mid = Math.floor((low + high) / 2);
-        
-        // 查询对应页码的数据
+
         const pageData = await hotspotsApi.getAll({
           page: mid,
           limit: pageSize,
-          ...dashboardFilters
+          ...buildFilterParams(dashboardFilters)
         });
-        
-        // 检查该页是否包含目标热点
+
+        if (pageData.data.length === 0) {
+          return -1;
+        }
+
         const found = pageData.data.some(h => h.id === hotspotId);
-        
         if (found) {
           return mid;
         }
-        
-        // 根据分页逻辑调整搜索范围
-        // 这里简化处理，实际应该根据排序字段和 createdAt 来判断
-        if (mid === low) {
-          // 已经检查了最小页但没找到，说明热点可能已被删除或不在列表中
-          return -1;
-        }
-        
-        // 继续二分查找
-        if (pageData.data.length > 0) {
-          const lastItem = pageData.data[pageData.data.length - 1];
-          if (new Date(lastItem.createdAt) > new Date()) {
-            // 如果最后一页的创建时间比当前页最新，创建时间更早，应该向前找
-            high = mid - 1;
-          } else {
-            // 创建时间更晚，应该向后找
-            low = mid + 1;
-          }
+
+        // 获取该页最后一个元素的排序值
+        const lastItem = pageData.data[pageData.data.length - 1];
+        let lastValue: number;
+
+        if (sortBy === 'createdAt') {
+          lastValue = new Date(lastItem.createdAt).getTime();
+        } else if (sortBy === 'publishedAt') {
+          lastValue = lastItem.publishedAt ? new Date(lastItem.publishedAt).getTime() : 0;
+        } else if (sortBy === 'relevance') {
+          lastValue = lastItem.relevance;
+        } else if (sortBy === 'importance') {
+          const importanceOrder: Record<string, number> = { urgent: 0, high: 1, medium: 2, low: 3 };
+          lastValue = importanceOrder[lastItem.importance] ?? 4;
         } else {
+          lastValue = 0;
+        }
+
+        // 根据排序方向和比较结果调整搜索范围
+        const shouldGoLeft = isDesc
+          ? typeof targetValue === 'number' && targetValue > lastValue
+          : typeof targetValue === 'number' && targetValue < lastValue;
+
+        if (shouldGoLeft) {
+          high = mid - 1;
+        } else {
+          low = mid + 1;
+        }
+
+        if (low === high && low === mid) {
           return -1;
         }
       }
-      
+
       return -1;
     } catch (error) {
       console.error('查找热点页码失败:', error);

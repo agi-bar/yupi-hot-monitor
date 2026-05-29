@@ -3,6 +3,7 @@ import * as cheerio from 'cheerio';
 import crypto from 'crypto';
 import type { SearchResult } from '../types.js';
 import { parseSearchEngineDate, parseWeixinDate } from '../utils/dateParser.js';
+import { isRecentArticle, filterRecentArticles } from '../utils/articleFilters.js';
 
 // 清理文本内容中的多余空行和格式字符
 function cleanTextContent(text: string): string {
@@ -108,8 +109,12 @@ export async function searchSogou(query: string): Promise<SearchResult[]> {
       }
     });
 
-    console.log(`Sogou search for "${query}": found ${results.length} results`);
-    return results;
+    console.log(`Sogou search for "${query}": found ${results.length} results before time filter`);
+    
+    const filteredResults = filterRecentArticles(results);
+    console.log(`Sogou search for "${query}": ${filteredResults.length}/${results.length} results after time filter`);
+    
+    return filteredResults;
   } catch (error) {
     console.error('Sogou search error:', error instanceof Error ? error.message : error);
     return [];
@@ -239,8 +244,12 @@ export async function searchBilibili(query: string): Promise<SearchResult[]> {
       }
     }));
 
-    console.log(`Bilibili search for "${query}": found ${results.length} results`);
-    return results;
+    console.log(`Bilibili search for "${query}": found ${results.length} results before time filter`);
+    
+    const filteredResults = filterRecentArticles(results);
+    console.log(`Bilibili search for "${query}": ${filteredResults.length}/${results.length} results after time filter`);
+    
+    return filteredResults;
   } catch (error) {
     console.error('Bilibili search error:', error instanceof Error ? error.message : error);
     return [];
@@ -339,8 +348,12 @@ export async function getBilibiliUserVideos(mid: number): Promise<SearchResult[]
       }
     }));
 
-    console.log(`Bilibili user ${mid} videos: found ${results.length} results`);
-    return results;
+    console.log(`Bilibili user ${mid} videos: found ${results.length} results before time filter`);
+    
+    const filteredResults = filterRecentArticles(results);
+    console.log(`Bilibili user ${mid} videos: ${filteredResults.length}/${results.length} results after time filter`);
+    
+    return filteredResults;
   } catch (error) {
     console.error('Bilibili user videos error:', error instanceof Error ? error.message : error);
     return [];
@@ -529,6 +542,7 @@ async function checkWeixinContentAvailability(url: string): Promise<{
 // ============================================================
 // 微信搜一搜（通过搜狗微信搜索，无需 API Key）
 // ============================================================
+
 export async function searchWeixin(query: string): Promise<SearchResult[]> {
   await weixinLimiter.wait();
 
@@ -586,10 +600,13 @@ export async function searchWeixin(query: string): Promise<SearchResult[]> {
       }
     });
 
-    console.log(`Weixin search for "${query}": found ${results.length} results before availability check`);
+    console.log(`Weixin search for "${query}": found ${results.length} results before time filter`);
+    
+    const recentResults = filterRecentArticles(results);
+    console.log(`Weixin search for "${query}": ${recentResults.length}/${results.length} results after time filter`);
 
     const availableResults: SearchResult[] = [];
-    for (const result of results) {
+    for (const result of recentResults) {
       if (result.url.includes('mp.weixin.qq.com')) {
         const availability = await checkWeixinContentAvailability(result.url);
         if (availability.available) {
@@ -602,7 +619,7 @@ export async function searchWeixin(query: string): Promise<SearchResult[]> {
       }
     }
 
-    console.log(`Weixin search for "${query}": ${availableResults.length}/${results.length} results available`);
+    console.log(`Weixin search for "${query}": ${availableResults.length}/${recentResults.length} results available`);
     return availableResults;
   } catch (error) {
     console.error('Weixin search error:', error instanceof Error ? error.message : error);

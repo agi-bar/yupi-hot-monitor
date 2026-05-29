@@ -157,7 +157,7 @@ export function useEnhancedNotifications(
       setUnreadCount(previousUnreadCount);
       console.error('Failed to mark all as read:', err);
     }
-  }, [notifications]);
+  }, [notifications, unreadCount]);
 
   const deleteNotification = useCallback(async (id: string) => {
     const previousNotifications = notifications;
@@ -197,7 +197,7 @@ export function useEnhancedNotifications(
       setUnreadCount(previousUnreadCount);
       console.error('Failed to clear notifications:', err);
     }
-  }, [notifications]);
+  }, [notifications, unreadCount]);
 
   const addNotification = useCallback((notification: Notification) => {
     const exists = notifications.some(n =>

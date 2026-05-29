@@ -63,7 +63,7 @@ function Dropdown({
 }: { 
   label: string; 
   value: string; 
-  options: { value: string; label: string; color?: string }[];
+  options: { value: string; label: string; color?: string; count?: number }[];
   onChange: (v: string) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -109,6 +109,11 @@ function Dropdown({
                 >
                   {value === option.value && <Check className="w-3 h-3 shrink-0" />}
                   <span className={cn(option.color)}>{option.label}</span>
+                  {option.count !== undefined && option.count > 0 && (
+                    <span className="ml-auto text-[10px] text-slate-500">
+                      {option.count}
+                    </span>
+                  )}
                 </button>
               ))}
             </motion.div>
@@ -145,7 +150,17 @@ export default function FilterSortBar({ filters, onChange, keywords }: FilterSor
   };
 
   const resetFilters = () => {
-    onChange({ ...defaultFilterState, sortBy: filters.sortBy, sortOrder: filters.sortOrder });
+    onChange({
+      ...defaultFilterState,
+      sortBy: filters.sortBy,
+      sortOrder: filters.sortOrder,
+      source: '',
+      sourceRecordId: '',
+      importance: '',
+      keywordId: '',
+      timeRange: '',
+      isReal: ''
+    });
   };
 
   const applyQuickFilter = (preset: typeof QUICK_FILTER_PRESETS[number]) => {
@@ -157,8 +172,12 @@ export default function FilterSortBar({ filters, onChange, keywords }: FilterSor
   };
 
   const keywordOptions = useMemo(() => [
-    { value: '', label: '全部关键词' },
-    ...keywords.filter(k => k.isActive).map(k => ({ value: k.id, label: k.text })),
+    { value: '', label: '全部关键词', count: undefined },
+    ...keywords.filter(k => k.isActive).map(k => ({ 
+      value: k.id, 
+      label: k.text,
+      count: k._count?.hotspots ?? 0
+    })),
   ], [keywords]);
 
   return (

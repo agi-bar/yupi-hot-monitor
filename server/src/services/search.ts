@@ -3,6 +3,7 @@ import * as cheerio from 'cheerio';
 import type { SearchResult } from '../types.js';
 import { extractRealUrlFromBing, resolveRedirectUrl, extractRealUrlFromBaidu } from '../utils/urlResolver.js';
 import { parseSearchEngineDate } from '../utils/dateParser.js';
+import { isRecentArticle, filterRecentArticles } from '../utils/articleFilters.js';
 
 // 清理文本内容中的多余空行和格式字符
 function cleanTextContent(text: string): string {
@@ -147,10 +148,13 @@ export async function searchBing(query: string): Promise<SearchResult[]> {
       }
     });
 
-    console.log(`Bing search for "${query}": found ${results.length} results`);
+    console.log(`Bing search for "${query}": found ${results.length} results before time filter`);
     
     const resolvedResults = await resolveSearchEngineUrls(results);
-    return resolvedResults;
+    const filteredResults = filterRecentArticles(resolvedResults);
+    console.log(`Bing search for "${query}": ${filteredResults.length}/${resolvedResults.length} results after time filter`);
+    
+    return filteredResults;
   } catch (error) {
     console.error('Bing search error:', error);
     return [];
@@ -248,8 +252,12 @@ export async function searchGoogle(query: string): Promise<SearchResult[]> {
       }
     });
 
-    console.log(`Google search for "${query}": found ${results.length} results`);
-    return results;
+    console.log(`Google search for "${query}": found ${results.length} results before time filter`);
+    
+    const filteredResults = filterRecentArticles(results);
+    console.log(`Google search for "${query}": ${filteredResults.length}/${results.length} results after time filter`);
+    
+    return filteredResults;
   } catch (error) {
     console.error('Google search error:', error);
     return [];
@@ -312,8 +320,12 @@ export async function searchDuckDuckGo(query: string): Promise<SearchResult[]> {
       }
     });
 
-    console.log(`DuckDuckGo search for "${query}": found ${results.length} results`);
-    return results;
+    console.log(`DuckDuckGo search for "${query}": found ${results.length} results before time filter`);
+    
+    const filteredResults = filterRecentArticles(results);
+    console.log(`DuckDuckGo search for "${query}": ${filteredResults.length}/${results.length} results after time filter`);
+    
+    return filteredResults;
   } catch (error) {
     console.error('DuckDuckGo search error:', error);
     return [];
