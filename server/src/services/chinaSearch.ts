@@ -200,24 +200,29 @@ export async function searchBilibili(query: string): Promise<SearchResult[]> {
       return [];
     }
 
-    const results: SearchResult[] = response.data.data.result.map(video => ({
-      title: video.title.replace(/<\/?em[^>]*>/g, ''), // 去掉高亮标签
-      content: video.description || video.title.replace(/<\/?em[^>]*>/g, ''),
-      url: `https://www.bilibili.com/video/${video.bvid}`,
-      source: 'bilibili' as const,
-      sourceId: video.bvid,
-      publishedAt: new Date(video.pubdate * 1000),
-      viewCount: video.play,
-      likeCount: video.like,
-      commentCount: video.review,
-      danmakuCount: video.danmaku,
-      author: {
-        name: video.author,
-        username: String(video.mid)
-      }
-    }));
+    const maxAgeDays = 7;
+    const cutoffTime = Date.now() - maxAgeDays * 24 * 60 * 60 * 1000;
 
-    console.log(`Bilibili search for "${query}": found ${results.length} results`);
+    const results: SearchResult[] = response.data.data.result
+      .filter(video => video.pubdate * 1000 >= cutoffTime)
+      .map(video => ({
+        title: video.title.replace(/<\/?em[^>]*>/g, ''),
+        content: video.description || video.title.replace(/<\/?em[^>]*>/g, ''),
+        url: `https://www.bilibili.com/video/${video.bvid}`,
+        source: 'bilibili' as const,
+        sourceId: video.bvid,
+        publishedAt: new Date(video.pubdate * 1000),
+        viewCount: video.play,
+        likeCount: video.like,
+        commentCount: video.review,
+        danmakuCount: video.danmaku,
+        author: {
+          name: video.author,
+          username: String(video.mid)
+        }
+      }));
+
+    console.log(`Bilibili search for "${query}": ${response.data.data.result.length} total, ${results.length} within ${maxAgeDays} days`);
     return results;
   } catch (error) {
     console.error('Bilibili search error:', error instanceof Error ? error.message : error);

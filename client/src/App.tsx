@@ -2,7 +2,8 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Flame, Search, Plus, Bell, RefreshCw, Sun, Moon,
-  Activity, Target, ChevronRight, ChevronsUpDown, ThermometerSun, Eye, Twitter, Globe, Zap, TrendingUp, Clock, AlertTriangle, User
+  Activity, Target, ChevronRight, ChevronsUpDown, ThermometerSun, Eye, Twitter, Globe, Zap, TrendingUp, Clock, AlertTriangle, User,
+  Trash2
 } from 'lucide-react';
 import { 
   keywordsApi, hotspotsApi, notificationsApi, triggerHotspotCheck,
@@ -18,6 +19,7 @@ import Pagination from './components/Pagination';
 import HotspotCard from './components/HotspotCard';
 import KeywordCard from './components/KeywordCard';
 import Toast from './components/Toast';
+import ConfirmDialog from './components/ConfirmDialog';
 import { sortHotspots } from './utils/sortHotspots';
 import { useTheme } from './contexts/ThemeContext';
 import { useToast } from './hooks/useToast';
@@ -48,6 +50,10 @@ function App() {
   const [expandedReasons, setExpandedReasons] = useState<Set<string>>(new Set());
   const [expandedContents, setExpandedContents] = useState<Set<string>>(new Set());
   const [allReasonsExpanded, setAllReasonsExpanded] = useState(false);
+  
+  const [selectedHotspots, setSelectedHotspots] = useState<Set<string>>(new Set());
+  const [showConfirmDialog, setShowConfirmDialog] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const loadData = useCallback(async () => {
     setIsLoading(true);
@@ -191,6 +197,58 @@ function App() {
     }
   };
 
+  const handleSelectHotspot = (id: string) => {
+    setSelectedHotspots(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
+
+  const handleSelectAllHotspots = () => {
+    if (selectedHotspots.size === hotspots.length) {
+      setSelectedHotspots(new Set());
+    } else {
+      setSelectedHotspots(new Set(hotspots.map(h => h.id)));
+    }
+  };
+
+  const handleDeleteHotspots = async () => {
+    setIsDeleting(true);
+    try {
+      const ids = Array.from(selectedHotspots);
+      let successCount = 0;
+      let failCount = 0;
+
+      for (const id of ids) {
+        try {
+          await hotspotsApi.delete(id);
+          successCount++;
+        } catch {
+          failCount++;
+        }
+      }
+
+      if (successCount > 0) {
+        success(`成功删除 ${successCount} 条热点数据`);
+      }
+      if (failCount > 0) {
+        error(`删除失败 ${failCount} 条热点数据`);
+      }
+
+      setSelectedHotspots(new Set());
+      await loadData();
+    } catch {
+      error('删除操作失败');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   const handleMarkAllRead = async () => {
     try {
       await notificationsApi.markAllAsRead();
@@ -321,6 +379,17 @@ function App() {
       <div className="fixed bottom-0 left-0 w-[400px] h-[400px] bg-cyan-500/5 dark:bg-cyan-500/5 rounded-full blur-3xl pointer-events-none" />
 
       <Toast toasts={toasts} onRemove={removeToast} />
+
+      <ConfirmDialog
+        isOpen={showConfirmDialog}
+        onClose={() => setShowConfirmDialog(false)}
+        onConfirm={handleDeleteHotspots}
+        title="确认删除"
+        message={`确定要删除选中的 ${selectedHotspots.size} 条热点数据吗？此操作不可撤销。`}
+        confirmText="确认删除"
+        cancelText="取消"
+        danger={true}
+      />
 
       <header className="sticky top-0 z-40 backdrop-blur-2xl bg-[var(--bg-surface)]/80 dark:bg-[var(--bg-surface)]/70 border-b border-[var(--border-default)]">
         <div className="max-w-6xl mx-auto px-6 py-4">
@@ -512,7 +581,21 @@ function App() {
                   <Flame className="w-5 h-5 text-orange-500" />
                   实时热点流
                 </h2>
-                <span className="text-xs text-[var(--text-muted)]">每 30 分钟自动更新</span>
+                <div className="flex items-center gap-3">
+                  {selectedHotspots.size > 0 && (
+                    <motion.button
+                      initial={{ opacity: 0, scale: 0.9 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      onClick={() => setShowConfirmDialog(true)}
+                      disabled={isDeleting}
+                      className="flex items-center gap-2 px-4 py-2 rounded-xl bg-red-500 text-white hover:bg-red-600 transition-colors text-sm font-medium disabled:opacity-50"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                      删除 ({selectedHotspots.size})
+                    </motion.button>
+                  )}
+                  <span className="text-xs text-[var(--text-muted)]">每 30 分钟自动更新</span>
+                </div>
               </div>
 
               <div className="mb-5">
@@ -538,7 +621,16 @@ function App() {
               ) : (
                 <div className="space-y-3">
                   {hotspots.some(h => h.relevanceReason) && (
-                    <div className="flex justify-end">
+                    <div className="flex justify-between items-center">
+                      <label className="flex items-center gap-2 text-xs text-[var(--text-muted)] cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={selectedHotspots.size === hotspots.length && hotspots.length > 0}
+                          onChange={handleSelectAllHotspots}
+                          className="w-3.5 h-3.5 rounded border-[var(--border-default)] bg-[var(--bg-elevated)] text-blue-600 focus:ring-blue-500/50 cursor-pointer"
+                        />
+                        全选 ({hotspots.length})
+                      </label>
                       <button
                         onClick={() => toggleAllReasons(hotspots)}
                         className="flex items-center gap-1.5 text-xs text-[var(--text-muted)] hover:text-blue-500 transition-colors px-3 py-1.5 rounded-lg hover:bg-[var(--bg-elevated)]"
@@ -558,6 +650,9 @@ function App() {
                       expandedContents={expandedContents}
                       onToggleReason={toggleReason}
                       onToggleContent={toggleContent}
+                      isSelected={selectedHotspots.has(hotspot.id)}
+                      onSelect={handleSelectHotspot}
+                      showSelect={true}
                     />
                   ))}
                 </div>

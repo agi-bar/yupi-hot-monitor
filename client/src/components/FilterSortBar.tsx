@@ -83,7 +83,7 @@ function Dropdown({
 }: { 
   label: string; 
   value: string; 
-  options: { value: string; label: string; color?: string }[];
+  options: { value: string; label: string; color?: string; count?: number }[];
   onChange: (v: string) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -121,14 +121,21 @@ function Dropdown({
                   key={option.value}
                   onClick={() => { onChange(option.value); setOpen(false); }}
                   className={cn(
-                    "w-full flex items-center gap-2 px-3 py-2 text-xs transition-colors text-left",
+                    "w-full flex items-center justify-between px-3 py-2 text-xs transition-colors text-left",
                     value === option.value
                       ? "bg-blue-500/10 text-blue-600 dark:text-blue-400"
                       : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
                   )}
                 >
-                  {value === option.value && <Check className="w-3 h-3 shrink-0" />}
-                  <span className={cn(option.color)}>{option.label}</span>
+                  <div className="flex items-center gap-2">
+                    {value === option.value && <Check className="w-3 h-3 shrink-0" />}
+                    <span className={cn(option.color)}>{option.label}</span>
+                  </div>
+                  {option.count !== undefined && option.count > 0 && (
+                    <span className="text-[10px] text-[var(--text-muted)] bg-[var(--bg-elevated)] px-1.5 py-0.5 rounded">
+                      {option.count}
+                    </span>
+                  )}
                 </button>
               ))}
             </motion.div>
@@ -162,7 +169,11 @@ export default function FilterSortBar({ filters, onChange, keywords }: FilterSor
 
   const keywordOptions = [
     { value: '', label: '全部关键词' },
-    ...keywords.filter(k => k.isActive).map(k => ({ value: k.id, label: k.text })),
+    ...keywords.filter(k => k.isActive).map(k => ({ 
+      value: k.id, 
+      label: k.text, 
+      count: k._count?.hotspots || 0 
+    })),
   ];
 
   return (

@@ -12,6 +12,9 @@ interface HotspotCardProps {
   expandedContents: Set<string>;
   onToggleReason: (id: string) => void;
   onToggleContent: (id: string) => void;
+  isSelected?: boolean;
+  onSelect?: (id: string) => void;
+  showSelect?: boolean;
 }
 
 function calcHeatScore(h: Hotspot): number {
@@ -83,7 +86,10 @@ export default function HotspotCard({
   expandedReasons, 
   expandedContents, 
   onToggleReason, 
-  onToggleContent 
+  onToggleContent,
+  isSelected = false,
+  onSelect,
+  showSelect = false
 }: HotspotCardProps) {
   const heatScore = calcHeatScore(hotspot);
   const heat = getHeatLevel(heatScore);
@@ -94,9 +100,22 @@ export default function HotspotCard({
       initial={{ opacity: 0, x: -10 }}
       animate={{ opacity: 1, x: 0 }}
       transition={{ delay: index * 0.03 }}
-      className="group p-5 rounded-2xl bg-[var(--bg-card)] hover:bg-[var(--bg-card-hover)] border border-[var(--border-subtle)] hover:border-[var(--border-default)] transition-all"
+      className={cn(
+        "group p-5 rounded-2xl bg-[var(--bg-card)] hover:bg-[var(--bg-card-hover)] border border-[var(--border-subtle)] hover:border-[var(--border-default)] transition-all",
+        isSelected && "border-blue-500/50 ring-2 ring-blue-500/20"
+      )}
     >
       <div className="flex items-start justify-between gap-4">
+        {showSelect && onSelect && (
+          <div className="flex-shrink-0 mt-1">
+            <input
+              type="checkbox"
+              checked={isSelected}
+              onChange={() => onSelect(hotspot.id)}
+              className="w-4 h-4 rounded border-[var(--border-default)] bg-[var(--bg-elevated)] text-blue-600 focus:ring-blue-500/50 focus:ring-offset-0 cursor-pointer"
+            />
+          </div>
+        )}
         <div className="flex-1 min-w-0">
           <div className="flex flex-wrap items-center gap-2 mb-3">
             <span className={cn("px-2.5 py-1 rounded-lg text-[10px] font-semibold uppercase tracking-wider flex items-center border", getImportanceBgClass(hotspot.importance))}>

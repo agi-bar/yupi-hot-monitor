@@ -122,14 +122,33 @@ export function isDomainAllowed(url: string): boolean {
   try {
     const parsedUrl = new URL(url);
     const hostname = parsedUrl.hostname.toLowerCase();
+    const pathname = parsedUrl.pathname.toLowerCase();
+    
+    if (hostname.includes('.sogou.com')) {
+      if (pathname.startsWith('/sogou') || pathname.startsWith('/web')) {
+        return false;
+      }
+      return true;
+    }
+    
+    if (hostname.includes('.baidu.com')) {
+      if (pathname.startsWith('/s')) {
+        return false;
+      }
+      return true;
+    }
+    
+    if (hostname.includes('bing.com') || hostname.includes('google.com') || hostname.includes('duckduckgo.com')) {
+      return false;
+    }
     
     return DOMAIN_WHITELIST.some(pattern => pattern.test(url)) ||
-           hostname.includes('.weibo.com') ||
-           hostname.includes('.bilibili.com') ||
-           hostname.includes('.zhihu.com') ||
-           hostname.includes('.weixin.qq.com') ||
-           hostname.includes('.twitter.com') ||
-           hostname.includes('.x.com');
+           hostname.endsWith('.weibo.com') || hostname === 'weibo.com' ||
+           hostname.endsWith('.bilibili.com') || hostname === 'bilibili.com' ||
+           hostname.endsWith('.zhihu.com') || hostname === 'zhihu.com' ||
+           hostname.endsWith('.weixin.qq.com') || hostname === 'weixin.qq.com' ||
+           hostname === 'twitter.com' ||
+           hostname === 'x.com';
   } catch {
     return false;
   }

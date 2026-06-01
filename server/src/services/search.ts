@@ -1,6 +1,7 @@
 import axios from 'axios';
 import * as cheerio from 'cheerio';
 import type { SearchResult } from '../types.js';
+import { isDomainAllowed } from '../utils/urlValidator.js';
 
 // User Agent 列表
 const USER_AGENTS = [
@@ -241,7 +242,42 @@ export async function searchHackerNews(query: string): Promise<SearchResult[]> {
   }
 }
 
-const TRACKING_PARAMS = ['src', 'timestamp', 'ver', 'signature', 'new', 'from', 'share', 'shareid', 'wxshare', 'wechatshare', '_t', 'timestamp_ms', 'isappinstalled'];
+const TRACKING_PARAMS = [
+  'src', 'timestamp', 'ver', 'signature', 'new', 'from', 'share', 'shareid', 
+  'wxshare', 'wechatshare', '_t', 'timestamp_ms', 'isappinstalled',
+  '__biz', 'mid', 'idx', 'sn', 'chksm', 'scene', 'subscene', 
+  'clicktime', 'ascene', 'devicetype', 'version', 'nettype', 
+  'abtest_cookie', 'lang', 'exportkey', 'pass_ticket', 'uin', 
+  'key', 'f', 'spm', 'k', 't', 'ref', 'id', 'source', 
+  'sxtoken', 'access_token', 'openid', 'unionid', 'appid'
+];
+
+const EXCLUDED_PATH_PATTERNS = [
+  /^\/topic\//,
+  /^\/group\//,
+  /^\/column\//,
+  /^\/category\//,
+  /^\/list\//,
+  /^\/tag\//,
+  /^\/channel\//,
+  /^\/section\//,
+];
+
+export function isTopicOrAggregationUrl(url: string): boolean {
+  try {
+    const parsedUrl = new URL(url);
+    const hostname = parsedUrl.hostname.toLowerCase();
+    
+    if (hostname.includes('toutiao.com')) {
+      const pathname = parsedUrl.pathname.toLowerCase();
+      return EXCLUDED_PATH_PATTERNS.some(pattern => pattern.test(pathname));
+    }
+    
+    return false;
+  } catch {
+    return false;
+  }
+}
 
 export function normalizeUrlForDeduplication(url: string): string {
   try {
@@ -270,6 +306,14 @@ export function deduplicateResults(allResults: SearchResult[]): SearchResult[] {
   const uniqueTitles = new Set<string>();
   
   return allResults.filter(item => {
+    if (!isDomainAllowed(item.url)) {
+      return false;
+    }
+    
+    if (isTopicOrAggregationUrl(item.url)) {
+      return false;
+    }
+    
     const normalizedUrl = normalizeUrlForDeduplication(item.url);
     const normalizedTitle = item.title.toLowerCase().trim();
     
