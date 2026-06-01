@@ -5,18 +5,6 @@ import type { SearchResult } from '../types.js';
 
 const MAX_CONTENT_AGE_DAYS = 180;
 
-// 无发布时间但仍需保留的 URL 模式（如企业介绍、职位信息等长期有效内容）
-const LONG_TERM_VALID_PATTERNS = [
-  /career\./i,  // 高校就业网站
-  /company\/view/i,  // 企业介绍页面
-  /\/jobs?\//i,  // 职位页面
-  /\/about/i,  // 关于我们页面
-  /\/profile/i,  // 企业档案
-  /zhilian\.zhaopin/i,  // 智联招聘
-  /51job\.com/i,  // 前程无忧
-  /liepin\.com/i,  // 猎聘
-];
-
 function parseSogouDate(dateStr: string): Date | null {
   if (!dateStr) return null;
   const match = dateStr.match(/(\d{4})[年\-\/](\d{1,2})[月\-\/](\d{1,2})/);
@@ -24,10 +12,6 @@ function parseSogouDate(dateStr: string): Date | null {
     return new Date(parseInt(match[1]), parseInt(match[2]) - 1, parseInt(match[3]));
   }
   return null;
-}
-
-function isUrlLongTermValid(url: string): boolean {
-  return LONG_TERM_VALID_PATTERNS.some(pattern => pattern.test(url));
 }
 
 interface DateCheckResult {
@@ -42,15 +26,6 @@ function checkContentAge(content: string, url: string, maxAgeDays: number = MAX_
     /(\d{4})年(\d{1,2})月(\d{1,2})日/,
     /(\d{4})[\-\/](\d{1,2})[\-\/](\d{1,2})/,
   ];
-  
-  // 检查是否为长期有效的 URL
-  if (isUrlLongTermValid(url)) {
-    return {
-      isTooOld: false,
-      hasDate: false,
-      reason: '长期有效内容（企业介绍/招聘等）'
-    };
-  }
   
   // 检查微信公众号 URL 中的 timestamp 参数
   const weixinMatch = url.match(/timestamp=(\d{10})/);
@@ -92,11 +67,11 @@ function checkContentAge(content: string, url: string, maxAgeDays: number = MAX_
     }
   }
   
-  // 无法提取日期且不是长期有效 URL，过滤掉无发布时间的内容
+  // 无法提取日期：过滤掉所有没有明确发布日期的内容
   return {
     isTooOld: true,
     hasDate: false,
-    reason: '无明确发布时间，无法判断时效性'
+    reason: '无明确发布日期，无法判断时效性'
   };
 }
 
@@ -202,10 +177,6 @@ export async function searchSogou(query: string): Promise<SearchResult[]> {
       if (ageCheck.isTooOld) {
         console.log(`[过滤] ${ageCheck.reason} - ${title}`);
         return;
-      }
-      
-      if (!ageCheck.hasDate && !isUrlLongTermValid(url)) {
-        console.log(`[⚠️  无发布时间] ${title}`);
       }
       
       results.push({
