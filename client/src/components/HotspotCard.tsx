@@ -66,7 +66,12 @@ function getSourceLabel(source: string) {
     bilibili: 'Bilibili',
     weibo: '微博热搜',
     hackernews: 'HackerNews',
-    duckduckgo: 'DuckDuckGo'
+    duckduckgo: 'DuckDuckGo',
+    zhihu: '知乎',
+    toutiao: '今日头条',
+    douyin: '抖音',
+    weixin: '微信',
+    baidu: '百度'
   };
   return labels[source] || source;
 }
@@ -297,7 +302,7 @@ export default function HotspotCard({
                     exit={{ height: 0, opacity: 0 }}
                     className="overflow-hidden"
                   >
-                    <p className="text-xs text-[var(--text-secondary)] mt-1 pl-4 border-l-2 border-[var(--border-subtle)] whitespace-pre-wrap break-words max-h-40 overflow-y-auto">
+                    <p className="text-xs text-[var(--text-secondary)] mt-1 pl-4 border-l-2 border-[var(--border-subtle)] whitespace-pre-wrap break-words">
                       {cleanWhitespace(hotspot.content)}
                     </p>
                   </motion.div>

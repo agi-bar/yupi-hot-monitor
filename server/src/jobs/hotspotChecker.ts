@@ -1,7 +1,7 @@
 import { Server } from 'socket.io';
 import { prisma } from '../db.js';
 import { searchTwitter } from '../services/twitter.js';
-import { searchBing, searchHackerNews, deduplicateResults, normalizeUrlForDeduplication } from '../services/search.js';
+import { searchBing, searchHackerNews, deduplicateResults, normalizeUrlForDeduplication, generateContentFingerprint } from '../services/search.js';
 import { searchSogou, searchBilibili, searchWeibo, detectAndFetchAccount } from '../services/chinaSearch.js';
 import { analyzeContent, expandKeyword, preMatchKeyword } from '../services/ai.js';
 import { sendHotspotEmail } from '../services/email.js';
@@ -136,20 +136,22 @@ export async function runHotspotCheck(io: Server): Promise<void> {
         if (item.source !== 'twitter' && otherProcessed >= OTHER_QUOTA) continue;
         if (twitterProcessed + otherProcessed >= TWITTER_QUOTA + OTHER_QUOTA) break;
         try {
-          // 检查是否已存在（先精确匹配，再模糊匹配）
+          const contentFingerprint = generateContentFingerprint(item.title, item.content);
+          
           let existing = await prisma.hotspot.findFirst({
             where: {
-              url: item.url,
-              source: item.source
+              OR: [
+                { url: item.url, source: item.source },
+                { fingerprint: contentFingerprint }
+              ]
             }
           });
           
           if (!existing) {
-            // 如果精确匹配没找到，尝试标准化URL匹配
             const normalizedUrl = normalizeUrlForDeduplication(item.url);
             existing = await prisma.hotspot.findFirst({
               where: {
-                url: { contains: normalizedUrl },
+                url: { startsWith: normalizedUrl },
                 source: item.source
               }
             });
@@ -204,6 +206,7 @@ export async function runHotspotCheck(io: Server): Promise<void> {
               url: item.url,
               source: item.source,
               sourceId: item.sourceId || null,
+              fingerprint: contentFingerprint,
               isReal: analysis.isReal,
               relevance: analysis.relevance,
               relevanceReason: analysis.relevanceReason || null,

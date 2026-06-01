@@ -1,5 +1,6 @@
 import axios from 'axios';
 import * as cheerio from 'cheerio';
+import crypto from 'crypto';
 import type { SearchResult } from '../types.js';
 import { isDomainAllowed } from '../utils/urlValidator.js';
 
@@ -263,13 +264,20 @@ const EXCLUDED_PATH_PATTERNS = [
   /^\/section\//,
 ];
 
+const AGGREGATION_HOSTNAMES = [
+  'toutiao.com',
+  'weibo.com',
+  'zhihu.com',
+  'bilibili.com',
+];
+
 export function isTopicOrAggregationUrl(url: string): boolean {
   try {
     const parsedUrl = new URL(url);
     const hostname = parsedUrl.hostname.toLowerCase();
+    const pathname = parsedUrl.pathname.toLowerCase();
     
-    if (hostname.includes('toutiao.com')) {
-      const pathname = parsedUrl.pathname.toLowerCase();
+    if (AGGREGATION_HOSTNAMES.some(h => hostname.includes(h))) {
       return EXCLUDED_PATH_PATTERNS.some(pattern => pattern.test(pathname));
     }
     
@@ -301,9 +309,12 @@ export function normalizeUrlForDeduplication(url: string): string {
   }
 }
 
+const MAX_AGE_DAYS = 7;
+
 export function deduplicateResults(allResults: SearchResult[]): SearchResult[] {
   const uniqueUrls = new Set<string>();
   const uniqueTitles = new Set<string>();
+  const cutoffTime = Date.now() - MAX_AGE_DAYS * 24 * 60 * 60 * 1000;
   
   return allResults.filter(item => {
     if (!isDomainAllowed(item.url)) {
@@ -312,6 +323,15 @@ export function deduplicateResults(allResults: SearchResult[]): SearchResult[] {
     
     if (isTopicOrAggregationUrl(item.url)) {
       return false;
+    }
+    
+    if (item.publishedAt) {
+      const publishTime = typeof item.publishedAt === 'string' 
+        ? new Date(item.publishedAt).getTime() 
+        : item.publishedAt.getTime();
+      if (publishTime < cutoffTime) {
+        return false;
+      }
     }
     
     const normalizedUrl = normalizeUrlForDeduplication(item.url);
@@ -352,4 +372,12 @@ export async function searchAll(query: string): Promise<SearchResult[]> {
   const uniqueResults = deduplicateResults(allResults);
   console.log(`Search aggregation for "${query}": ${allResults.length} total, ${uniqueResults.length} unique`);
   return uniqueResults;
+}
+
+export function generateContentFingerprint(title: string, content: string): string {
+  const text = `${title}\n${content}`.toLowerCase().trim();
+  const normalizedText = text
+    .replace(/\s+/g, '')
+    .replace(/[^\u4e00-\u9fa5a-zA-Z0-9]/g, '');
+  return crypto.createHash('md5').update(normalizedText).digest('hex');
 }

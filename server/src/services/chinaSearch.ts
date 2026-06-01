@@ -31,6 +31,10 @@ class RateLimiter {
 const sogouLimiter = new RateLimiter(3000);
 const bilibiliLimiter = new RateLimiter(2000);
 const weiboLimiter = new RateLimiter(3000);
+const zhihuLimiter = new RateLimiter(3000);
+const toutiaoLimiter = new RateLimiter(3000);
+const douyinLimiter = new RateLimiter(3000);
+const baiduLimiter = new RateLimiter(5000);
 
 function getRandomUserAgent(): string {
   return USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
@@ -66,19 +70,37 @@ export async function searchSogou(query: string): Promise<SearchResult[]> {
       const title = titleElement.text().trim();
       let url = titleElement.attr('href') || '';
 
-      // 搜狗的相对路径转绝对路径
+      // 搜狗的相对路径转绝对路径，提取真实目标URL
       if (url.startsWith('/link?url=')) {
-        url = `https://www.sogou.com${url}`;
+        try {
+          const urlParams = new URLSearchParams(url.split('?')[1]);
+          const decodedUrl = decodeURIComponent(urlParams.get('url') || '');
+          if (decodedUrl && decodedUrl.startsWith('http')) {
+            url = decodedUrl;
+          } else {
+            url = `https://www.sogou.com${url}`;
+          }
+        } catch {
+          url = `https://www.sogou.com${url}`;
+        }
       }
 
-      const snippet = $(element).find('.space-txt, .str-text-info, .str_info, .text-layout').text().trim()
+      const snippet = $(element).find('.space-txt, .str-text-info, .str_info, .text-layout').first().text().trim()
         || $(element).find('p').first().text().trim();
+      
+      const cleanedSnippet = snippet
+        .replace(/\s+/g, ' ')
+        .replace(/[\n\r]+/g, ' ')
+        .replace(/\s+([.,;:!?。，；：！？])/g, '$1')
+        .replace(/(https?:\/\/[^\s]+)\s*/gi, '')
+        .replace(/[^\u4e00-\u9fa5a-zA-Z0-9\s.,;:!?。，；：！？、''""（）【】]/g, '')
+        .trim()
+        .substring(0, 500);
 
-      // 排除广告和无关结果
-      if (title && url && !title.includes('大家还在搜')) {
+      if (title && url && !title.includes('大家还在搜') && cleanedSnippet.length >= 10) {
         results.push({
           title,
-          content: snippet || title,
+          content: cleanedSnippet || title,
           url,
           source: 'sogou' as const,
           publishedAt: new Date()
@@ -406,6 +428,302 @@ export async function searchWeibo(query: string): Promise<SearchResult[]> {
 }
 
 // ============================================================
+// 知乎搜索（通过搜狗搜索）
+// ============================================================
+export async function searchZhihu(query: string): Promise<SearchResult[]> {
+  await zhihuLimiter.wait();
+
+  try {
+    const response = await axios.get('https://www.sogou.com/web', {
+      params: {
+        query: `site:zhihu.com ${query}`,
+        ie: 'utf-8'
+      },
+      headers: {
+        'User-Agent': getRandomUserAgent(),
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+        'Referer': 'https://www.sogou.com/'
+      },
+      timeout: 15000,
+      maxRedirects: 5
+    });
+
+    const $ = cheerio.load(response.data);
+    const results: SearchResult[] = [];
+
+    $('.vrwrap, .rb').each((_, element) => {
+      const titleElement = $(element).find('h3 a, .vr-title a, .vrTitle a').first();
+      const title = titleElement.text().trim();
+      let url = titleElement.attr('href') || '';
+
+      // 提取搜狗跳转链接中的真实URL
+      if (url.startsWith('/link?url=')) {
+        try {
+          const urlParams = new URLSearchParams(url.split('?')[1]);
+          const decodedUrl = decodeURIComponent(urlParams.get('url') || '');
+          if (decodedUrl && decodedUrl.startsWith('http')) {
+            url = decodedUrl;
+          } else {
+            url = `https://www.sogou.com${url}`;
+          }
+        } catch {
+          url = `https://www.sogou.com${url}`;
+        }
+      }
+
+      const snippet = $(element).find('.space-txt, .str-text-info, .str_info, .text-layout').text().trim()
+        || $(element).find('p').first().text().trim();
+
+      if (title && url && url.includes('zhihu.com') && !title.includes('大家还在搜')) {
+        const match = url.match(/zhihu\.com\/(question|answer|article)\/(\d+)/);
+        if (match) {
+          url = `https://www.zhihu.com/${match[1]}/${match[2]}`;
+        }
+
+        results.push({
+          title,
+          content: snippet || title,
+          url,
+          source: 'zhihu' as const,
+          publishedAt: new Date()
+        });
+      }
+    });
+
+    console.log(`Zhihu search for "${query}": found ${results.length} results`);
+    return results;
+  } catch (error) {
+    console.error('Zhihu search error:', error instanceof Error ? error.message : error);
+    return [];
+  }
+}
+
+// ============================================================
+// 今日头条搜索
+// ============================================================
+export async function searchToutiao(query: string): Promise<SearchResult[]> {
+  await toutiaoLimiter.wait();
+
+  try {
+    const response = await axios.get('https://www.toutiao.com/api/search/content/', {
+      params: {
+        keyword: query,
+        offset: 0,
+        count: 20,
+        source: 'input',
+        terrain: 'list',
+        pd: 'synthesis'
+      },
+      headers: {
+        'User-Agent': getRandomUserAgent(),
+        'Accept': 'application/json, text/plain, */*',
+        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+        'Referer': 'https://so.toutiao.com/'
+      },
+      timeout: 15000
+    });
+
+    const results: SearchResult[] = [];
+
+    if (response.data?.data) {
+      for (const item of response.data.data) {
+        if (item.group_id && item.title) {
+          const url = item.article_url || `https://www.toutiao.com/a${item.group_id}/`;
+
+          results.push({
+            title: item.title,
+            content: item.abstract || item.content || '',
+            url,
+            source: 'toutiao' as const,
+            author: item.user_info?.name || item.media_name ? {
+              name: item.user_info?.name || item.media_name || '',
+              avatar: item.user_info?.avatar_url || undefined
+            } : undefined,
+            publishedAt: item.publish_time ? new Date(item.publish_time * 1000) : new Date()
+          });
+        }
+      }
+    }
+
+    console.log(`Toutiao search for "${query}": found ${results.length} results`);
+    return results;
+  } catch (error) {
+    console.error('Toutiao search error:', error instanceof Error ? error.message : error);
+    return [];
+  }
+}
+
+// ============================================================
+// 抖音搜索
+// ============================================================
+export async function searchDouyin(query: string): Promise<SearchResult[]> {
+  await douyinLimiter.wait();
+
+  try {
+    const response = await axios.get('https://www.douyin.com/aweme/v1/web/search/item/', {
+      params: {
+        keyword: query,
+        search_channel: 'aweme_video_web',
+        search_source: 'normal_search',
+        query_correct_type: 1,
+        is_filter_search: 0,
+        from_group_id: '',
+        offset: 0,
+        count: 20
+      },
+      headers: {
+        'User-Agent': getRandomUserAgent(),
+        'Accept': 'application/json, text/plain, */*',
+        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+        'Referer': 'https://www.douyin.com/'
+      },
+      timeout: 15000
+    });
+
+    const results: SearchResult[] = [];
+
+    if (response.data?.item_list) {
+      for (const item of response.data.item_list) {
+        if (item.aweme_id) {
+          const url = `https://www.douyin.com/video/${item.aweme_id}`;
+
+          results.push({
+            title: item.desc || `抖音视频 ${item.aweme_id}`,
+            content: item.desc || '',
+            url,
+            source: 'douyin' as const,
+            author: item.author?.nickname ? {
+              name: item.author.nickname,
+              avatar: item.author.avatar_thumb?.url_list?.[0] || undefined
+            } : undefined,
+            likeCount: item.statistics?.digg_count || 0,
+            publishedAt: item.create_time ? new Date(item.create_time * 1000) : new Date()
+          });
+        }
+      }
+    }
+
+    console.log(`Douyin search for "${query}": found ${results.length} results`);
+    return results;
+  } catch (error) {
+    console.error('Douyin search error:', error instanceof Error ? error.message : error);
+    return [];
+  }
+}
+
+// ============================================================
+// 微信公众号搜索（通过搜狗微信）
+// ============================================================
+export async function searchWeixin(query: string): Promise<SearchResult[]> {
+  await sogouLimiter.wait();
+
+  try {
+    const response = await axios.get('https://weixin.sogou.com/weixin', {
+      params: {
+        type: 2,
+        query,
+        ie: 'utf8',
+        s_from: 'input',
+        _sug_: 'n',
+        _sug_type_: ''
+      },
+      headers: {
+        'User-Agent': getRandomUserAgent(),
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+        'Referer': 'https://weixin.sogou.com/'
+      },
+      timeout: 15000
+    });
+
+    const $ = cheerio.load(response.data);
+    const results: SearchResult[] = [];
+
+    $('.news-box .news-list li, .txt-box').each((_, element) => {
+      const titleElement = $(element).find('h3 a, .tit a, a.account_title').first();
+      const title = titleElement.text().trim().replace(/<[^>]*>/g, '');
+      let url = titleElement.attr('href') || '';
+
+      if (title && url) {
+        const snippet = $(element).find('.txt-info, .txt-desc, .desc, p').first().text().trim();
+        const authorName = $(element).find('.account, .s-p, .info .name').first().text().trim();
+
+        results.push({
+          title,
+          content: snippet || title,
+          url,
+          source: 'weixin' as const,
+          author: authorName ? { name: authorName } : undefined,
+          publishedAt: new Date()
+        });
+      }
+    });
+
+    console.log(`Weixin search for "${query}": found ${results.length} results`);
+    return results;
+  } catch (error) {
+    console.error('Weixin search error:', error instanceof Error ? error.message : error);
+    return [];
+  }
+}
+
+// ============================================================
+// 百度搜索（作为备选，更严格的反爬）
+// ============================================================
+export async function searchBaidu(query: string): Promise<SearchResult[]> {
+  await baiduLimiter.wait();
+
+  try {
+    const response = await axios.get('https://www.baidu.com/s', {
+      params: {
+        wd: query,
+        rn: 20,
+       ie: 'utf-8'
+      },
+      headers: {
+        'User-Agent': getRandomUserAgent(),
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Cookie': `BAIDUID=${crypto.randomUUID().replace(/-/g, '').toUpperCase()}:FG=1; BIDUPSID=${crypto.randomUUID().replace(/-/g, '').toUpperCase()}`
+      },
+      timeout: 15000,
+      maxRedirects: 5
+    });
+
+    const $ = cheerio.load(response.data);
+    const results: SearchResult[] = [];
+
+    $('#content_left .result, #content_left .c-container').each((_, element) => {
+      const titleElement = $(element).find('h3 a, .t a').first();
+      const title = titleElement.text().trim();
+      let url = titleElement.attr('href') || '';
+
+      if (title && url) {
+        const snippet = $(element).find('.c-abstract, .content-right_8Zs40, .t span').first().text().trim();
+
+        if (!title.includes('百度快照') && !url.includes('baidu.com/cache')) {
+          results.push({
+            title,
+            content: snippet || title,
+            url,
+            source: 'baidu' as const,
+            publishedAt: new Date()
+          });
+        }
+      }
+    });
+
+    console.log(`Baidu search for "${query}": found ${results.length} results`);
+    return results;
+  } catch (error) {
+    console.error('Baidu search error:', error instanceof Error ? error.message : error);
+    return [];
+  }
+}
+
+// ============================================================
 // 账号检测与信息获取
 // ============================================================
 
@@ -461,12 +779,17 @@ export async function searchAllChina(query: string): Promise<SearchResult[]> {
   const results = await Promise.allSettled([
     searchSogou(query),
     searchBilibili(query),
-    searchWeibo(query)
+    searchWeibo(query),
+    searchZhihu(query),
+    searchToutiao(query),
+    searchDouyin(query),
+    searchWeixin(query),
+    searchBaidu(query)
   ]);
 
   const allResults: SearchResult[] = [];
-  const sourceNames = ['Sogou', 'Bilibili', 'Weibo'];
-  
+  const sourceNames = ['Sogou', 'Bilibili', 'Weibo', 'Zhihu', 'Toutiao', 'Douyin', 'Weixin', 'Baidu'];
+
   results.forEach((result, index) => {
     if (result.status === 'fulfilled') {
       allResults.push(...result.value);

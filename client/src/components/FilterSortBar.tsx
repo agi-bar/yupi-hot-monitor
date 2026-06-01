@@ -5,7 +5,7 @@ import {
   ChevronDown, Check, RotateCcw
 } from 'lucide-react';
 import { cn } from '../lib/utils';
-import type { Keyword } from '../services/api';
+import type { Keyword, Stats } from '../services/api';
 
 export interface FilterState {
   source: string;
@@ -31,6 +31,7 @@ interface FilterSortBarProps {
   filters: FilterState;
   onChange: (filters: FilterState) => void;
   keywords: Keyword[];
+  stats?: Stats;
 }
 
 const SORT_OPTIONS = [
@@ -41,16 +42,20 @@ const SORT_OPTIONS = [
   { value: 'hot', label: '热度综合', icon: TrendingUp },
 ];
 
-const SOURCE_OPTIONS = [
+const SOURCE_CONFIG = [
   { value: '', label: '全部来源' },
   { value: 'twitter', label: 'Twitter' },
-  { value: 'bing', label: 'Bing' },
-  { value: 'google', label: 'Google' },
-  { value: 'sogou', label: '搜狗' },
+  { value: 'weibo', label: '微博' },
+  { value: 'weixin', label: '微信公众号' },
+  { value: 'channels', label: '视频号' },
+  { value: 'douyin', label: '抖音' },
   { value: 'bilibili', label: 'Bilibili' },
-  { value: 'weibo', label: '微博热搜' },
+  { value: 'toutiao', label: '今日头条' },
+  { value: 'zhihu', label: '知乎' },
   { value: 'hackernews', label: 'HackerNews' },
-  { value: 'duckduckgo', label: 'DuckDuckGo' },
+  { value: 'sogou', label: '搜狗' },
+  { value: 'baidu', label: '百度' },
+  { value: 'bing', label: 'Bing' },
 ];
 
 const IMPORTANCE_OPTIONS = [
@@ -146,7 +151,7 @@ function Dropdown({
   );
 }
 
-export default function FilterSortBar({ filters, onChange, keywords }: FilterSortBarProps) {
+export default function FilterSortBar({ filters, onChange, keywords, stats }: FilterSortBarProps) {
   const [showFilters, setShowFilters] = useState(true);
 
   const activeFilterCount = [
@@ -175,6 +180,11 @@ export default function FilterSortBar({ filters, onChange, keywords }: FilterSor
       count: k._count?.hotspots || 0 
     })),
   ];
+
+  const sourceOptions = SOURCE_CONFIG.map(option => ({
+    ...option,
+    count: option.value === '' ? stats?.total || 0 : stats?.bySource?.[option.value] || 0
+  }));
 
   return (
     <div className="space-y-3">
@@ -233,7 +243,7 @@ export default function FilterSortBar({ filters, onChange, keywords }: FilterSor
           <div className="flex items-center gap-1.5 flex-wrap">
             {filters.source && (
               <FilterTag
-                label={SOURCE_OPTIONS.find(o => o.value === filters.source)?.label || filters.source}
+                label={sourceOptions.find(o => o.value === filters.source)?.label || filters.source}
                 onRemove={() => update('source', '')}
               />
             )}
@@ -274,7 +284,7 @@ export default function FilterSortBar({ filters, onChange, keywords }: FilterSor
             transition={{ duration: 0.2 }}
           >
             <div className="flex items-center gap-2 flex-wrap p-3 rounded-xl bg-[var(--bg-card)] border border-[var(--border-subtle)]">
-              <Dropdown label="来源" value={filters.source} options={SOURCE_OPTIONS} onChange={(v) => update('source', v)} />
+              <Dropdown label="来源" value={filters.source} options={sourceOptions} onChange={(v) => update('source', v)} />
               <Dropdown label="重要程度" value={filters.importance} options={IMPORTANCE_OPTIONS} onChange={(v) => update('importance', v)} />
               <Dropdown label="关键词" value={filters.keywordId} options={keywordOptions} onChange={(v) => update('keywordId', v)} />
               <Dropdown label="时间" value={filters.timeRange} options={TIME_RANGE_OPTIONS} onChange={(v) => update('timeRange', v)} />

@@ -31,8 +31,9 @@ export async function expandKeyword(keyword: string): Promise<string[]> {
   }
 
   try {
+    const model = process.env.ANTHROPIC_API_KEY ? 'claude-3-haiku-20240307' : 'MiniMax-M2.5';
     const result = await anthropic.messages.create({
-      model: 'MiniMax-M2.5',
+      model,
       max_tokens: 300,
       temperature: 0.2,
       system: `你是一个搜索查询扩展专家。给定一个监控关键词，生成该关键词的变体和相关检索词，用于文本匹配。
@@ -55,7 +56,8 @@ export async function expandKeyword(keyword: string): Promise<string[]> {
       ]
     });
 
-    const responseContent = result.content[0].type === 'text' ? result.content[0].text : '';
+    const textContent = result.content.find(c => c.type === 'text');
+    const responseContent = textContent ? textContent.text : '';
     const jsonMatch = responseContent.match(/\[[\s\S]*\]/);
     if (jsonMatch) {
       const parsed: string[] = JSON.parse(jsonMatch[0]);
@@ -163,9 +165,10 @@ export async function analyzeContent(content: string, keyword: string, preMatchR
 
   try {
     const prompt = buildAnalysisPrompt(keyword, matchResult);
+    const model = process.env.ANTHROPIC_API_KEY ? 'claude-3-haiku-20240307' : 'MiniMax-M2.5';
 
     const result = await anthropic.messages.create({
-      model: 'MiniMax-M2.5',
+      model,
       max_tokens: 500,
       temperature: 0.2,
       system: prompt,
@@ -177,7 +180,8 @@ export async function analyzeContent(content: string, keyword: string, preMatchR
       ]
     });
 
-    const responseContent = result.content[0].type === 'text' ? result.content[0].text : '';
+    const textContent = result.content.find(c => c.type === 'text');
+    const responseContent = textContent ? textContent.text : '';
     
     // 尝试解析 JSON
     const jsonMatch = responseContent.match(/\{[\s\S]*\}/);
@@ -198,7 +202,10 @@ export async function analyzeContent(content: string, keyword: string, preMatchR
     throw new Error('Failed to parse AI response');
   } catch (error) {
     console.error('AI analysis failed:', error);
-    // Fallback - 提高阈值以确保数据不被过滤
+    if (error instanceof Error) {
+      console.error('  Error message:', error.message);
+      console.error('  Stack trace:', error.stack);
+    }
     return {
       isReal: true,
       relevance: matchResult.matched ? 65 : 50,
@@ -207,6 +214,31 @@ export async function analyzeContent(content: string, keyword: string, preMatchR
       importance: 'low',
       summary: content.slice(0, 50) + '...'
     };
+  }
+}
+
+export async function validateAIConfiguration(): Promise<{ success: boolean; message: string }> {
+  if (!process.env.ANTHROPIC_API_KEY && !process.env.MINIMAX_API_KEY) {
+    return { success: false, message: '未配置 AI API Key (ANTHROPIC_API_KEY 或 MINIMAX_API_KEY)' };
+  }
+  
+  try {
+    const model = process.env.ANTHROPIC_API_KEY ? 'claude-3-haiku-20240307' : 'MiniMax-M2.5';
+    const result = await anthropic.messages.create({
+      model,
+      max_tokens: 10,
+      messages: [{ role: 'user', content: 'test' }]
+    });
+    
+    const textContent = result.content.find(c => c.type === 'text');
+    if (textContent) {
+      return { success: true, message: 'AI API 连接验证成功' };
+    } else {
+      return { success: false, message: 'AI API 响应格式异常，未找到 text 类型内容' };
+    }
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    return { success: false, message: `AI API 连接失败: ${errorMsg}` };
   }
 }
 

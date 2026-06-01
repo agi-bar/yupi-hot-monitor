@@ -11,6 +11,7 @@ import hotspotsRouter from './routes/hotspots.js';
 import settingsRouter from './routes/settings.js';
 import notificationsRouter from './routes/notifications.js';
 import { runHotspotCheck } from './jobs/hotspotChecker.js';
+import { validateAIConfiguration } from './services/ai.js';
 
 dotenv.config();
 
@@ -19,8 +20,12 @@ const httpServer = createServer(app);
 const io = new Server(httpServer, {
   cors: {
     origin: process.env.CLIENT_URL || 'http://localhost:5173',
-    methods: ['GET', 'POST']
-  }
+    methods: ['GET', 'POST'],
+    credentials: true
+  },
+  path: '/socket.io',
+  transports: ['websocket', 'polling'],
+  allowEIO3: true
 });
 
 // Middleware
@@ -82,13 +87,21 @@ export { io };
 
 const PORT = process.env.PORT || 3001;
 
-httpServer.listen(PORT, () => {
+httpServer.listen(PORT, async () => {
   console.log(`
   🔥 热点监控服务启动成功!
   📡 Server running on http://localhost:${PORT}
   🔌 WebSocket ready
   ⏰ Hotspot check scheduled every 30 minutes
   `);
+  
+  const aiConfig = await validateAIConfiguration();
+  if (aiConfig.success) {
+    console.log('✅ ' + aiConfig.message);
+  } else {
+    console.log('⚠️ ' + aiConfig.message);
+    console.log('   将使用默认分数进行热点分析');
+  }
 });
 
 // Graceful shutdown

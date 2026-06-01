@@ -7,7 +7,7 @@ dotenv.config();
 
 import { searchTwitter } from './services/twitter.js';
 import { searchBing, searchHackerNews } from './services/search.js';
-import { searchSogou, searchBilibili, searchWeibo } from './services/chinaSearch.js';
+import { searchSogou, searchBilibili, searchWeibo, searchZhihu, searchToutiao, searchDouyin, searchWeixin, searchBaidu } from './services/chinaSearch.js';
 
 const TEST_QUERY = 'Codex';
 
@@ -46,6 +46,11 @@ async function main() {
   results.push(await testSource('Sogou', () => searchSogou(TEST_QUERY)));
   results.push(await testSource('Bilibili', () => searchBilibili(TEST_QUERY)));
   results.push(await testSource('Weibo', () => searchWeibo(TEST_QUERY)));
+  results.push(await testSource('Zhihu', () => searchZhihu(TEST_QUERY)));
+  results.push(await testSource('Toutiao', () => searchToutiao(TEST_QUERY)));
+  results.push(await testSource('Douyin', () => searchDouyin(TEST_QUERY)));
+  results.push(await testSource('Weixin', () => searchWeixin(TEST_QUERY)));
+  results.push(await testSource('Baidu', () => searchBaidu(TEST_QUERY)));
 
   console.log(`\n${'='.repeat(50)}`);
   console.log('SUMMARY');

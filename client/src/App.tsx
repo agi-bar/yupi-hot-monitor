@@ -49,7 +49,7 @@ function App() {
   const [searchResults, setSearchResults] = useState<Hotspot[]>([]);
   const [expandedReasons, setExpandedReasons] = useState<Set<string>>(new Set());
   const [expandedContents, setExpandedContents] = useState<Set<string>>(new Set());
-  const [allReasonsExpanded, setAllReasonsExpanded] = useState(false);
+  const [allReasonsExpanded, setAllReasonsExpanded] = useState(true);
   
   const [selectedHotspots, setSelectedHotspots] = useState<Set<string>>(new Set());
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
@@ -356,7 +356,12 @@ function App() {
       bilibili: 'Bilibili',
       weibo: '微博热搜',
       hackernews: 'HackerNews',
-      duckduckgo: 'DuckDuckGo'
+      duckduckgo: 'DuckDuckGo',
+      zhihu: '知乎',
+      toutiao: '今日头条',
+      douyin: '抖音',
+      weixin: '微信',
+      baidu: '百度'
     };
     return labels[source] || source;
   };
@@ -603,6 +608,7 @@ function App() {
                   filters={dashboardFilters}
                   onChange={setDashboardFilters}
                   keywords={keywords}
+                  stats={stats || undefined}
                 />
               </div>
               
@@ -636,7 +642,7 @@ function App() {
                         className="flex items-center gap-1.5 text-xs text-[var(--text-muted)] hover:text-blue-500 transition-colors px-3 py-1.5 rounded-lg hover:bg-[var(--bg-elevated)]"
                       >
                         <ChevronsUpDown className="w-3.5 h-3.5" />
-                        {allReasonsExpanded ? '折叠所有理由' : '展开所有理由'}
+                        {allReasonsExpanded ? '展开所有理由' : '折叠所有理由'}
                       </button>
                     </div>
                   )}
@@ -762,6 +768,7 @@ function App() {
               filters={searchFilters}
               onChange={setSearchFilters}
               keywords={keywords}
+              stats={stats || undefined}
             />
 
             <div className="space-y-3">

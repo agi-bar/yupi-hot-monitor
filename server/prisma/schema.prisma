@@ -27,6 +27,7 @@ model Hotspot {
   url             String
   source          String    // twitter, bing, google
   sourceId        String?   // 原始推文ID等
+  fingerprint     String?   // 内容指纹，用于去重
   isReal          Boolean   @default(true)
   relevance       Int       @default(0)
   relevanceReason String?   // AI 分析相关性的理由
@@ -51,6 +52,7 @@ model Hotspot {
   keyword         Keyword?  @relation(fields: [keywordId], references: [id], onDelete: SetNull)
 
   @@unique([url, source])
+  @@index([fingerprint])
 }
 
 model Notification {
