@@ -68,6 +68,31 @@ async function callMinimax(messages: Array<{role: string; content: string}>, tem
 }
 
 const expansionCache = new Map<string, string[]>();
+const EXPANSION_MAX_RETRIES = 2;
+const EXPANSION_RETRY_DELAY_MS = 1000;
+
+async function callWithRetry<T>(
+  fn: () => Promise<T>,
+  maxRetries: number,
+  retryDelay: number
+): Promise<{ data: T | null; error: Error | null }> {
+  let lastError: Error | null = null;
+  
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const data = await fn();
+      return { data, error: null };
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      console.warn(`Attempt ${attempt + 1}/${maxRetries + 1} failed:`, lastError.message);
+      if (attempt < maxRetries) {
+        await new Promise(r => setTimeout(r, retryDelay * Math.pow(2, attempt)));
+      }
+    }
+  }
+  
+  return { data: null, error: lastError };
+}
 
 export async function expandKeyword(keyword: string): Promise<string[]> {
   if (expansionCache.has(keyword)) {
@@ -83,11 +108,12 @@ export async function expandKeyword(keyword: string): Promise<string[]> {
     return result;
   }
 
-  try {
-    const content = await callMinimax([
-      {
-        role: 'system',
-        content: `你是一个搜索查询扩展专家。给定一个监控关键词，生成该关键词的变体和相关检索词，用于文本匹配。
+  const { data: content, error } = await callWithRetry(
+    async () => {
+      const result = await callMinimax([
+        {
+          role: 'system',
+          content: `你是一个搜索查询扩展专家。给定一个监控关键词，生成该关键词的变体和相关检索词，用于文本匹配。
 
 规则：
 1. 包含原始关键词的各种写法（大小写、空格、连字符变体）
@@ -99,13 +125,23 @@ export async function expandKeyword(keyword: string): Promise<string[]> {
 输出 JSON 数组，只输出 JSON，不要有其他内容。
 示例输入："Claude Sonnet 4.6"
 示例输出：["Claude Sonnet 4.6", "Claude Sonnet", "Sonnet 4.6", "claude-sonnet-4.6", "Claude 4.6", "Anthropic Sonnet"]`
-      },
-      {
-        role: 'user',
-        content: keyword
-      }
-    ], 0.2, 300);
+        },
+        {
+          role: 'user',
+          content: keyword
+        }
+      ], 0.2, 300);
+      return result;
+    },
+    EXPANSION_MAX_RETRIES,
+    EXPANSION_RETRY_DELAY_MS
+  );
 
+  if (error) {
+    console.error('Query expansion failed after retries:', error);
+  }
+
+  if (content) {
     const arrayMatch = content.match(/\[[\s\S]*\]/);
     if (arrayMatch) {
       try {
@@ -123,8 +159,6 @@ export async function expandKeyword(keyword: string): Promise<string[]> {
         return expanded;
       }
     }
-  } catch (error) {
-    console.error('Query expansion failed:', error);
   }
 
   const fallback = [keyword, ...coreTerms];

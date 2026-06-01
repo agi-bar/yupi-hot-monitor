@@ -8,7 +8,7 @@ export function useSourcesConfig() {
 
   useEffect(() => {
     loadSources();
-  }, []);
+  }, [loadSources]);
 
   async function loadSources() {
     try {

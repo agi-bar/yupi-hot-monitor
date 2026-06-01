@@ -24,7 +24,11 @@ export function rateLimit(options?: {
   const message = options?.message || 'Too many requests, please try again later';
 
   return async (req: Request, res: Response, next: NextFunction) => {
-    const key = req.ip || 'unknown';
+    const forwardedFor = req.headers['x-forwarded-for'];
+    const clientIp = typeof forwardedFor === 'string' 
+      ? forwardedFor.split(',')[0]?.trim() 
+      : (typeof forwardedFor === 'object' ? forwardedFor?.[0] : undefined);
+    const key = clientIp || req.ip || 'unknown';
     const now = Date.now();
 
     try {
@@ -103,14 +107,34 @@ function handleInMemoryRateLimit(
   next();
 }
 
-setInterval(() => {
+const CLEANUP_BATCH_SIZE = 100;
+const CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
+
+function cleanupInMemoryStore(): void {
   const now = Date.now();
-  for (const key in inMemoryStore) {
-    if (now > inMemoryStore[key].resetTime) {
-      delete inMemoryStore[key];
+  const keys = Object.keys(inMemoryStore);
+  let processed = 0;
+  
+  const cleanupBatch = () => {
+    const keysToDelete: string[] = [];
+    for (let i = 0; i < CLEANUP_BATCH_SIZE && processed < keys.length; i++, processed++) {
+      const key = keys[processed];
+      if (inMemoryStore[key] && now > inMemoryStore[key].resetTime) {
+        keysToDelete.push(key);
+      }
     }
-  }
-}, 60 * 60 * 1000);
+    
+    keysToDelete.forEach(key => delete inMemoryStore[key]);
+    
+    if (processed < keys.length) {
+      setImmediate(cleanupBatch);
+    }
+  };
+  
+  cleanupBatch();
+}
+
+setInterval(cleanupInMemoryStore, CLEANUP_INTERVAL_MS);
 
 export function getRateLimitStats() {
   const inMemoryCount = Object.keys(inMemoryStore).length;

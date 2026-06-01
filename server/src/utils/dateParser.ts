@@ -123,8 +123,15 @@ export function parseSearchEngineDate(dateStr: string): Date | null {
     const month = parseInt(monthDayMatch[1]) - 1;
     const day = parseInt(monthDayMatch[2]);
     const date = new Date();
+    const currentMonth = date.getMonth();
     date.setMonth(month);
     date.setDate(day);
+    if (month < currentMonth && date.getMonth() === 11) {
+      date.setFullYear(date.getFullYear() + 1);
+    }
+    if (month > currentMonth && date.getMonth() !== month) {
+      date.setFullYear(date.getFullYear() - 1);
+    }
     date.setHours(12, 0, 0, 0);
     return date;
   }

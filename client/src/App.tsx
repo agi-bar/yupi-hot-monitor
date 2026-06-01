@@ -20,6 +20,7 @@ import {
 } from './types/notification';
 import { generateNotificationId } from './utils/idGenerator';
 import { toNotification } from './utils/notificationConverter';
+import { escapeHtml } from './utils/sanitize';
 import { cn } from './lib/utils';
 import { Spotlight } from './components/ui/spotlight';
 import { BackgroundBeams } from './components/ui/background-beams';
@@ -1091,7 +1092,7 @@ function App() {
                             </span>
                             {hotspot.keyword && (
                               <span className="text-[10px] px-2 py-0.5 rounded-md bg-blue-500/10 text-blue-400 border border-blue-500/20">
-                                {hotspot.keyword.text}
+                                {escapeHtml(hotspot.keyword.text)}
                               </span>
                             )}
                             {/* 真实性标记 */}
@@ -1128,7 +1129,7 @@ function App() {
                           
                           {/* Title */}
                           <h3 className="font-medium text-white mb-2 line-clamp-2 group-hover:text-blue-400 transition-colors">
-                            {hotspot.title}
+                            {escapeHtml(hotspot.title)}
                           </h3>
                           
                           {/* AI Summary - 标注 */}
@@ -1634,7 +1635,7 @@ function App() {
                           {heat.label} {heatScore}
                         </span>
                       </div>
-                      <h3 className="font-medium text-white mb-2 group-hover:text-blue-400 transition-colors">{hotspot.title}</h3>
+                      <h3 className="font-medium text-white mb-2 group-hover:text-blue-400 transition-colors">{escapeHtml(hotspot.title)}</h3>
                       {hotspot.summary && (
                         <div className="mb-2">
                           <span className="text-[10px] text-blue-400/60 font-medium mr-1.5">AI 摘要</span>

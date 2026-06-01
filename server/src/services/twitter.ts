@@ -82,12 +82,19 @@ function buildAdvancedQuery(keyword: string, type: 'Top' | 'Latest'): string {
 // ============================================================
 // HTTP 请求
 // ============================================================
+class TwitterApiNotConfiguredError extends Error {
+  constructor() {
+    super('Twitter API key not configured');
+    this.name = 'TwitterApiNotConfiguredError';
+  }
+}
+
 async function makeTwitterRequest(endpoint: string, params: Record<string, string> = {}): Promise<any> {
   const apiKey = process.env.TWITTER_API_KEY;
 
   if (!apiKey) {
-    console.warn('Twitter API key not configured');
-    return { tweets: [] };
+    console.warn('⚠️ Twitter API key not configured, throwing error to be handled upstream');
+    throw new TwitterApiNotConfiguredError();
   }
 
   const url = new URL(`${TWITTER_API_BASE}${endpoint}`);

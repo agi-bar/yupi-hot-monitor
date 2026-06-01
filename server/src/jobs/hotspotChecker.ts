@@ -482,31 +482,38 @@ async function processKeyword(keyword: { id: string; text: string }, io: Server)
             console.error(`  ⚠️  Soft deduplication error:`, error);
           }
 
-          await prisma.notification.upsert({
-            where: { hotspotId: hotspot.id },
-            create: {
-              type: NOTIFICATION_TYPES.HOTSPOT,
-              title: `发现新热点: ${hotspot.title.slice(0, NOTIFICATION_CONFIG.TITLE_MAX_LENGTH)}`,
-              content: analysis.summary || hotspot.content.slice(0, NOTIFICATION_CONFIG.CONTENT_MAX_LENGTH),
-              hotspotId: hotspot.id
-            },
-            update: {}
-          }).catch((error) => {
-            if (error.code === 'P2002') {
+          let notificationCreated = false;
+          try {
+            await prisma.notification.upsert({
+              where: { hotspotId: hotspot.id },
+              create: {
+                type: NOTIFICATION_TYPES.HOTSPOT,
+                title: `发现新热点: ${hotspot.title.slice(0, NOTIFICATION_CONFIG.TITLE_MAX_LENGTH)}`,
+                content: analysis.summary || hotspot.content.slice(0, NOTIFICATION_CONFIG.CONTENT_MAX_LENGTH),
+                hotspotId: hotspot.id
+              },
+              update: {}
+            });
+            notificationCreated = true;
+          } catch (error: unknown) {
+             const err = error as { code?: string };
+             if (err.code === 'P2002') {
               console.log(`  ⏭️  Notification already exists for hotspot: ${hotspot.id}`);
             } else {
               console.error(`  ⚠️  Notification creation error:`, error);
             }
-          });
+          }
 
-          io.to(`keyword:${keyword.text}`).emit('hotspot:new', hotspot);
-          io.emit('notification', {
-            type: NOTIFICATION_TYPES.HOTSPOT,
-            title: '发现新热点',
-            content: hotspot.title,
-            hotspotId: hotspot.id,
-            importance: hotspot.importance
-          });
+          if (notificationCreated) {
+            io.to(`keyword:${keyword.text}`).emit('hotspot:new', hotspot);
+            io.emit('notification', {
+              type: NOTIFICATION_TYPES.HOTSPOT,
+              title: '发现新热点',
+              content: hotspot.title,
+              hotspotId: hotspot.id,
+              importance: hotspot.importance
+            });
+          }
 
           if ([IMPORTANCE_LEVELS.HIGH, IMPORTANCE_LEVELS.URGENT].includes(analysis.importance as any)) {
             await sendHotspotEmail(hotspot);

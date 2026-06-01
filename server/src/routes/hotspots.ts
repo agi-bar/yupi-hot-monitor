@@ -3,8 +3,12 @@ import { prisma } from '../db.js';
 import { sortHotspots } from '../utils/sortHotspots.js';
 import { getRedis } from '../utils/redis.js';
 import { logInfo, logError } from '../utils/logger.js';
+import type { Prisma } from '@prisma/client';
 
 const router = Router();
+
+type HotspotWhereInput = Prisma.HotspotWhereInput;
+type HotspotOrderByWithRelationInput = Prisma.HotspotOrderByWithRelationInput;
 
 const DEDUP_CACHE_PREFIX = 'hotspot:dedup:';
 
@@ -48,11 +52,11 @@ router.get('/', async (req, res) => {
     if (limitNum < MIN_PAGE_SIZE) limitNum = MIN_PAGE_SIZE;
     if (limitNum > MAX_PAGE_SIZE) limitNum = MAX_PAGE_SIZE;
 
-    const where: any = {};
-    if (source) where.source = source;
-    if (sourceRecordId) where.sourceRecordId = sourceRecordId;
-    if (importance) where.importance = importance;
-    if (keywordId) where.keywordId = keywordId;
+    const where: HotspotWhereInput = {};
+    if (source) where.source = source as string;
+    if (sourceRecordId) where.sourceRecordId = sourceRecordId as string;
+    if (importance) where.importance = importance as string;
+    if (keywordId) where.keywordId = keywordId as string;
     if (isReal !== undefined && isReal !== '') {
       where.isReal = isReal === 'true';
     }
@@ -86,7 +90,7 @@ router.get('/', async (req, res) => {
     }
 
     // 排序处理
-    let orderBy: any;
+    let orderBy: HotspotOrderByWithRelationInput | Record<string, 'asc' | 'desc'>;
     const sort = sortBy as string;
     const order = (sortOrder as string) === 'asc' ? 'asc' : 'desc';
 
@@ -95,7 +99,7 @@ router.get('/', async (req, res) => {
 
     switch (sort) {
       case 'publishedAt':
-        orderBy = [{ publishedAt: order }, { createdAt: 'desc' }];
+        orderBy = [{ publishedAt: order as 'asc' | 'desc' }, { createdAt: 'desc' as const }];
         break;
       case 'relevance':
         orderBy = { relevance: order };

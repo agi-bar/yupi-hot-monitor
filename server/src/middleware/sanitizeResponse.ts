@@ -1,37 +1,38 @@
-export function sanitizeSource(source: any): any {
+interface SanitizableSource {
+  config?: unknown;
+  allowedRoles?: unknown;
+  credentials?: unknown;
+  [key: string]: unknown;
+}
+
+export function sanitizeSource<T extends SanitizableSource>(source: T | null): T | null {
   if (!source) return source;
 
   const sanitized = { ...source };
-
-  // 删除敏感字段
   delete sanitized.config;
   delete sanitized.allowedRoles;
 
-  return sanitized;
+  return sanitized as T;
 }
 
-export function sanitizeSources(sources: any[]): any[] {
-  return sources.map(sanitizeSource);
+export function sanitizeSources<T extends SanitizableSource>(sources: T[]): T[] {
+  return sources.map(s => sanitizeSource(s)) as T[];
 }
 
-export function sanitizeDataSource(source: any): any {
+export function sanitizeDataSource<T extends SanitizableSource>(source: T | null): T | null {
   if (!source) return source;
 
   const sanitized = { ...source };
-
-  // 删除敏感配置字段
   delete sanitized.config;
   delete sanitized.credentials;
 
-  return sanitized;
+  return sanitized as T;
 }
 
 export function sanitizeError(error: Error, isProduction = false): string {
   if (isProduction) {
-    // 生产环境不返回详细错误信息
     return 'An error occurred. Please try again later.';
   }
   
-  // 开发环境返回基本错误信息
   return error.message || 'Unknown error';
 }
