@@ -21,7 +21,7 @@ export interface PaginationProps {
   disabled?: boolean;
 }
 
-const defaultPageSizeOptions = [10, 20, 50, 100];
+const defaultPageSizeOptions = [5, 10, 20, 50, 100];
 
 function safeParseInt(value: string | number, defaultValue: number): number {
   const parsed = parseInt(String(value), 10);
@@ -56,7 +56,7 @@ export default function Pagination({
   currentPage,
   totalPages,
   totalItems,
-  pageSize = 20,
+  pageSize = 5,
   pageSizeOptions = defaultPageSizeOptions,
   onPageChange,
   onPageSizeChange,

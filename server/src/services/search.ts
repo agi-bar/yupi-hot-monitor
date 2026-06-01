@@ -241,16 +241,48 @@ export async function searchHackerNews(query: string): Promise<SearchResult[]> {
   }
 }
 
-// 去重工具函数
+const TRACKING_PARAMS = ['src', 'timestamp', 'ver', 'signature', 'new', 'from', 'share', 'shareid', 'wxshare', 'wechatshare', '_t', 'timestamp_ms', 'isappinstalled'];
+
+export function normalizeUrlForDeduplication(url: string): string {
+  try {
+    const parsedUrl = new URL(url);
+    
+    TRACKING_PARAMS.forEach(param => {
+      parsedUrl.searchParams.delete(param);
+    });
+    
+    const searchString = parsedUrl.search.toString();
+    const hasQuery = searchString.length > 1;
+    
+    let normalized = `https://${parsedUrl.hostname}${parsedUrl.pathname}`;
+    if (hasQuery) {
+      normalized += searchString;
+    }
+    
+    return normalized.replace(/\/$/, '');
+  } catch {
+    return url.replace(/\/$/, '').replace(/^https?:\/\/www\./, 'https://');
+  }
+}
+
 export function deduplicateResults(allResults: SearchResult[]): SearchResult[] {
   const uniqueUrls = new Set<string>();
+  const uniqueTitles = new Set<string>();
+  
   return allResults.filter(item => {
-    // 标准化 URL 用于去重
-    const normalizedUrl = item.url.replace(/\/$/, '').replace(/^https?:\/\/www\./, 'https://');
+    const normalizedUrl = normalizeUrlForDeduplication(item.url);
+    const normalizedTitle = item.title.toLowerCase().trim();
+    
     if (uniqueUrls.has(normalizedUrl)) {
       return false;
     }
+    
+    if (uniqueTitles.has(normalizedTitle)) {
+      return false;
+    }
+    
     uniqueUrls.add(normalizedUrl);
+    uniqueTitles.add(normalizedTitle);
     return true;
   });
 }

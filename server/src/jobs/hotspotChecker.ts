@@ -1,10 +1,11 @@
 import { Server } from 'socket.io';
 import { prisma } from '../db.js';
 import { searchTwitter } from '../services/twitter.js';
-import { searchBing, searchHackerNews, deduplicateResults } from '../services/search.js';
+import { searchBing, searchHackerNews, deduplicateResults, normalizeUrlForDeduplication } from '../services/search.js';
 import { searchSogou, searchBilibili, searchWeibo, detectAndFetchAccount } from '../services/chinaSearch.js';
 import { analyzeContent, expandKeyword, preMatchKeyword } from '../services/ai.js';
 import { sendHotspotEmail } from '../services/email.js';
+import { checkUrlQuality, isContentTooOld } from '../utils/urlValidator.js';
 import type { SearchResult } from '../types.js';
 
 // 新鲜度过滤：丢弃超过指定小时数的内容
@@ -135,20 +136,45 @@ export async function runHotspotCheck(io: Server): Promise<void> {
         if (item.source !== 'twitter' && otherProcessed >= OTHER_QUOTA) continue;
         if (twitterProcessed + otherProcessed >= TWITTER_QUOTA + OTHER_QUOTA) break;
         try {
-          // 检查是否已存在
-          const existing = await prisma.hotspot.findFirst({
+          // 检查是否已存在（先精确匹配，再模糊匹配）
+          let existing = await prisma.hotspot.findFirst({
             where: {
               url: item.url,
               source: item.source
             }
           });
+          
+          if (!existing) {
+            // 如果精确匹配没找到，尝试标准化URL匹配
+            const normalizedUrl = normalizeUrlForDeduplication(item.url);
+            existing = await prisma.hotspot.findFirst({
+              where: {
+                url: { contains: normalizedUrl },
+                source: item.source
+              }
+            });
+          }
 
           if (existing) {
             continue;
           }
 
-          // AI 分析（传入关键词和预匹配结果）
+          // 先做快速检查：URL质量检查（避免浪费AI资源
+          const urlQuality = checkUrlQuality(item.url, 180);
+          if (!urlQuality.valid) {
+            console.log(`  ❌ Invalid URL (${urlQuality.reason}): ${item.url.slice(0, 50)}...`);
+            continue;
+          }
+
+          // 内容时间检测：从标题和内容中提取日期，过滤过旧的内容
           const fullText = item.title + '\n' + item.content;
+          const contentCheck = isContentTooOld(fullText, 180);
+          if (contentCheck.tooOld) {
+            console.log(`  ❌ Outdated content (${contentCheck.reason}): ${item.title.slice(0, 30)}...`);
+            continue;
+          }
+
+          // 最后才做AI分析（资源消耗大）
           const preMatch = preMatchKeyword(fullText, expandedKeywords);
           const analysis = await analyzeContent(fullText, keyword.text, preMatch);
 

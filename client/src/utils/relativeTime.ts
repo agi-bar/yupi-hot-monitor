@@ -42,3 +42,16 @@ export function formatDateTime(dateStr: string | null | undefined): string {
     minute: '2-digit',
   });
 }
+
+/**
+ * 清理文本中的多余空白和空行
+ */
+export function cleanWhitespace(text: string | null | undefined): string {
+  if (!text) return '';
+  return text
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/[ \t]+/g, ' ')
+    .trim();
+}

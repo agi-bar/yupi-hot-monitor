@@ -140,7 +140,7 @@ function Dropdown({
 }
 
 export default function FilterSortBar({ filters, onChange, keywords }: FilterSortBarProps) {
-  const [showFilters, setShowFilters] = useState(false);
+  const [showFilters, setShowFilters] = useState(true);
 
   const activeFilterCount = [
     filters.source,

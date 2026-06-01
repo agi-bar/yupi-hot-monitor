@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { ExternalLink, ChevronDown, ChevronUp, ThermometerSun, Zap, Repeat2, MessageCircle, Quote, Eye, Clock, Activity, Target, FileText, Shield, ShieldAlert, User } from 'lucide-react';
 import { cn } from '../lib/utils';
 import type { Hotspot } from '../services/api';
-import { relativeTime, formatDateTime } from '../utils/relativeTime';
+import { relativeTime, formatDateTime, cleanWhitespace } from '../utils/relativeTime';
 
 interface HotspotCardProps {
   hotspot: Hotspot;
@@ -279,7 +279,7 @@ export default function HotspotCard({
                     className="overflow-hidden"
                   >
                     <p className="text-xs text-[var(--text-secondary)] mt-1 pl-4 border-l-2 border-[var(--border-subtle)] whitespace-pre-wrap break-words max-h-40 overflow-y-auto">
-                      {hotspot.content}
+                      {cleanWhitespace(hotspot.content)}
                     </p>
                   </motion.div>
                 )}

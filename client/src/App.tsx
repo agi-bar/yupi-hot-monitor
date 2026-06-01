@@ -43,7 +43,7 @@ function App() {
   const [searchFilters, setSearchFilters] = useState<FilterState>({ ...defaultFilterState });
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
-  const [pageSize, setPageSize] = useState(20);
+  const [pageSize, setPageSize] = useState(5);
   const [searchResults, setSearchResults] = useState<Hotspot[]>([]);
   const [expandedReasons, setExpandedReasons] = useState<Set<string>>(new Set());
   const [expandedContents, setExpandedContents] = useState<Set<string>>(new Set());
@@ -76,6 +76,10 @@ function App() {
       setStats(statsData);
       setNotifications(notifData.data);
       setUnreadCount(notifData.unreadCount);
+      
+      const hotspotIds = hotspotsData.data.map(h => h.id);
+      setExpandedReasons(new Set(hotspotIds));
+      setExpandedContents(new Set(hotspotIds));
 
       const activeKeywords = keywordsData.filter(k => k.isActive).map(k => k.text);
       if (activeKeywords.length > 0) {
@@ -109,6 +113,8 @@ function App() {
         if (exists) return prev;
         return [hotspot as Hotspot, ...prev.slice(0, pageSize - 1)];
       });
+      setExpandedReasons(prev => new Set([...prev, hotspot.id]));
+      setExpandedContents(prev => new Set([...prev, hotspot.id]));
       showToast('发现新热点: ' + hotspot.title.slice(0, 30), 'success');
     });
 
@@ -202,9 +208,21 @@ function App() {
       else next.add(id);
       return next;
     });
+    setExpandedContents(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   };
 
   const toggleContent = (id: string) => {
+    setExpandedReasons(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
     setExpandedContents(prev => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
@@ -216,8 +234,10 @@ function App() {
   const toggleAllReasons = (list: Hotspot[]) => {
     if (allReasonsExpanded) {
       setExpandedReasons(new Set());
+      setExpandedContents(new Set());
     } else {
       setExpandedReasons(new Set(list.filter(h => h.relevanceReason).map(h => h.id)));
+      setExpandedContents(new Set(list.filter(h => h.content && h.content !== h.summary).map(h => h.id)));
     }
     setAllReasonsExpanded(!allReasonsExpanded);
   };
