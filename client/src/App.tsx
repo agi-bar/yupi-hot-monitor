@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Flame, Search, Plus, Bell, RefreshCw, Sun, Moon,
@@ -9,7 +9,7 @@ import {
   keywordsApi, hotspotsApi, notificationsApi, triggerHotspotCheck,
   type Keyword, type Hotspot, type Stats, type Notification
 } from './services/api';
-import { onNewHotspot, onNotification, subscribeToKeywords } from './services/socket';
+import { onNewHotspot, onNotification, subscribeToKeywords, unsubscribeFromKeywords } from './services/socket';
 import { cn } from './lib/utils';
 import { Spotlight } from './components/ui/spotlight';
 import { BackgroundBeams } from './components/ui/background-beams';
@@ -54,6 +54,7 @@ function App() {
   const [selectedHotspots, setSelectedHotspots] = useState<Set<string>>(new Set());
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const keywordsRef = useRef<Keyword[]>([]);
 
   const loadData = useCallback(async () => {
     setIsLoading(true);
@@ -86,11 +87,6 @@ function App() {
       const hotspotIds = hotspotsData.data.map(h => h.id);
       setExpandedReasons(new Set(hotspotIds));
       setExpandedContents(new Set(hotspotIds));
-
-      const activeKeywords = keywordsData.filter(k => k.isActive).map(k => k.text);
-      if (activeKeywords.length > 0) {
-        subscribeToKeywords(activeKeywords);
-      }
     } catch (err) {
       console.error('Failed to load data:', err);
       error('加载数据失败');
@@ -103,6 +99,26 @@ function App() {
     setCurrentPage(1);
   }, [dashboardFilters]);
 
+  useEffect(() => {
+    const activeKeywords = keywords.filter(k => k.isActive).map(k => k.text);
+    
+    if (activeKeywords.length > 0) {
+      subscribeToKeywords(activeKeywords);
+    }
+    
+    return () => {
+      const prevKeywords = keywordsRef.current;
+      const prevActive = prevKeywords.filter(k => k.isActive).map(k => k.text);
+      const toUnsubscribe = prevActive.filter(k => !activeKeywords.includes(k));
+      
+      if (toUnsubscribe.length > 0) {
+        unsubscribeFromKeywords(toUnsubscribe);
+      }
+      
+      keywordsRef.current = keywords;
+    };
+  }, [keywords]);
+
   const handlePageSizeChange = (newSize: number) => {
     setPageSize(newSize);
     setCurrentPage(1);
@@ -110,6 +126,13 @@ function App() {
 
   useEffect(() => {
     loadData();
+  }, [loadData]);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      loadData();
+    }, 60000);
+    return () => clearInterval(interval);
   }, [loadData]);
 
   useEffect(() => {

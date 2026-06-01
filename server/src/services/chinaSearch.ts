@@ -3,6 +3,103 @@ import * as cheerio from 'cheerio';
 import crypto from 'crypto';
 import type { SearchResult } from '../types.js';
 
+const MAX_CONTENT_AGE_DAYS = 180;
+
+// 无发布时间但仍需保留的 URL 模式（如企业介绍、职位信息等长期有效内容）
+const LONG_TERM_VALID_PATTERNS = [
+  /career\./i,  // 高校就业网站
+  /company\/view/i,  // 企业介绍页面
+  /\/jobs?\//i,  // 职位页面
+  /\/about/i,  // 关于我们页面
+  /\/profile/i,  // 企业档案
+  /zhilian\.zhaopin/i,  // 智联招聘
+  /51job\.com/i,  // 前程无忧
+  /liepin\.com/i,  // 猎聘
+];
+
+function parseSogouDate(dateStr: string): Date | null {
+  if (!dateStr) return null;
+  const match = dateStr.match(/(\d{4})[年\-\/](\d{1,2})[月\-\/](\d{1,2})/);
+  if (match) {
+    return new Date(parseInt(match[1]), parseInt(match[2]) - 1, parseInt(match[3]));
+  }
+  return null;
+}
+
+function isUrlLongTermValid(url: string): boolean {
+  return LONG_TERM_VALID_PATTERNS.some(pattern => pattern.test(url));
+}
+
+interface DateCheckResult {
+  isTooOld: boolean;
+  hasDate: boolean;
+  reason: string;
+}
+
+function checkContentAge(content: string, url: string, maxAgeDays: number = MAX_CONTENT_AGE_DAYS): DateCheckResult {
+  const cutoff = Date.now() - maxAgeDays * 24 * 60 * 60 * 1000;
+  const datePatterns = [
+    /(\d{4})年(\d{1,2})月(\d{1,2})日/,
+    /(\d{4})[\-\/](\d{1,2})[\-\/](\d{1,2})/,
+  ];
+  
+  // 检查是否为长期有效的 URL
+  if (isUrlLongTermValid(url)) {
+    return {
+      isTooOld: false,
+      hasDate: false,
+      reason: '长期有效内容（企业介绍/招聘等）'
+    };
+  }
+  
+  // 检查微信公众号 URL 中的 timestamp 参数
+  const weixinMatch = url.match(/timestamp=(\d{10})/);
+  if (weixinMatch) {
+    const timestamp = parseInt(weixinMatch[1]) * 1000; // 转换为毫秒
+    const publishDate = new Date(timestamp);
+    if (publishDate.getTime() < cutoff) {
+      return {
+        isTooOld: true,
+        hasDate: true,
+        reason: `微信公众号发布时间 ${publishDate.toLocaleDateString('zh-CN')} 超过 ${maxAgeDays} 天`
+      };
+    } else {
+      return {
+        isTooOld: false,
+        hasDate: true,
+        reason: `微信公众号发布时间 ${publishDate.toLocaleDateString('zh-CN')} 在有效期内`
+      };
+    }
+  }
+  
+  for (const pattern of datePatterns) {
+    const match = content.match(pattern);
+    if (match) {
+      const date = new Date(parseInt(match[1]), parseInt(match[2]) - 1, parseInt(match[3]));
+      if (date.getTime() < cutoff) {
+        return {
+          isTooOld: true,
+          hasDate: true,
+          reason: `内容日期 ${match[0]} 超过 ${maxAgeDays} 天`
+        };
+      } else {
+        return {
+          isTooOld: false,
+          hasDate: true,
+          reason: `内容日期 ${match[0]} 在有效期内`
+        };
+      }
+    }
+  }
+  
+  // 无法提取日期且不是长期有效 URL，过滤掉无发布时间的内容
+  return {
+    isTooOld: true,
+    hasDate: false,
+    reason: '无明确发布时间，无法判断时效性'
+  };
+}
+
 // User Agent 列表
 const USER_AGENTS = [
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -97,15 +194,27 @@ export async function searchSogou(query: string): Promise<SearchResult[]> {
         .trim()
         .substring(0, 500);
 
-      if (title && url && !title.includes('大家还在搜') && cleanedSnippet.length >= 10) {
-        results.push({
-          title,
-          content: cleanedSnippet || title,
-          url,
-          source: 'sogou' as const,
-          publishedAt: new Date()
-        });
+      if (!title || !url || title.includes('大家还在搜') || cleanedSnippet.length < 10) {
+        return;
       }
+      
+      const ageCheck = checkContentAge(cleanedSnippet, url);
+      if (ageCheck.isTooOld) {
+        console.log(`[过滤] ${ageCheck.reason} - ${title}`);
+        return;
+      }
+      
+      if (!ageCheck.hasDate && !isUrlLongTermValid(url)) {
+        console.log(`[⚠️  无发布时间] ${title}`);
+      }
+      
+      results.push({
+        title,
+        content: cleanedSnippet || title,
+        url,
+        source: 'sogou' as const,
+        publishedAt: new Date()
+      });
     });
 
     console.log(`Sogou search for "${query}": found ${results.length} results`);
@@ -645,19 +754,28 @@ export async function searchWeixin(query: string): Promise<SearchResult[]> {
       const title = titleElement.text().trim().replace(/<[^>]*>/g, '');
       let url = titleElement.attr('href') || '';
 
-      if (title && url) {
-        const snippet = $(element).find('.txt-info, .txt-desc, .desc, p').first().text().trim();
-        const authorName = $(element).find('.account, .s-p, .info .name').first().text().trim();
-
-        results.push({
-          title,
-          content: snippet || title,
-          url,
-          source: 'weixin' as const,
-          author: authorName ? { name: authorName } : undefined,
-          publishedAt: new Date()
-        });
+      if (!title || !url) {
+        return;
       }
+
+      const snippet = $(element).find('.txt-info, .txt-desc, .desc, p').first().text().trim();
+      const authorName = $(element).find('.account, .s-p, .info .name').first().text().trim();
+
+      const fullContent = snippet || title;
+      const ageCheck = checkContentAge(fullContent, url);
+      if (ageCheck.isTooOld) {
+        console.log(`[微信过滤] ${ageCheck.reason} - ${title}`);
+        return;
+      }
+
+      results.push({
+        title,
+        content: fullContent,
+        url,
+        source: 'weixin' as const,
+        author: authorName ? { name: authorName } : undefined,
+        publishedAt: new Date()
+      });
     });
 
     console.log(`Weixin search for "${query}": found ${results.length} results`);
@@ -700,19 +818,25 @@ export async function searchBaidu(query: string): Promise<SearchResult[]> {
       const title = titleElement.text().trim();
       let url = titleElement.attr('href') || '';
 
-      if (title && url) {
-        const snippet = $(element).find('.c-abstract, .content-right_8Zs40, .t span').first().text().trim();
-
-        if (!title.includes('百度快照') && !url.includes('baidu.com/cache')) {
-          results.push({
-            title,
-            content: snippet || title,
-            url,
-            source: 'baidu' as const,
-            publishedAt: new Date()
-          });
-        }
+      if (!title || !url || title.includes('百度快照') || url.includes('baidu.com/cache')) {
+        return;
       }
+
+      const snippet = $(element).find('.c-abstract, .content-right_8Zs40, .t span').first().text().trim();
+      const fullContent = snippet || title;
+      const ageCheck = checkContentAge(fullContent, url);
+      if (ageCheck.isTooOld) {
+        console.log(`[百度过滤] ${ageCheck.reason} - ${title}`);
+        return;
+      }
+
+      results.push({
+        title,
+        content: fullContent,
+        url,
+        source: 'baidu' as const,
+        publishedAt: new Date()
+      });
     });
 
     console.log(`Baidu search for "${query}": found ${results.length} results`);

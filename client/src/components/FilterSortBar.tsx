@@ -47,7 +47,6 @@ const SOURCE_CONFIG = [
   { value: 'twitter', label: 'Twitter' },
   { value: 'weibo', label: '微博' },
   { value: 'weixin', label: '微信公众号' },
-  { value: 'channels', label: '视频号' },
   { value: 'douyin', label: '抖音' },
   { value: 'bilibili', label: 'Bilibili' },
   { value: 'toutiao', label: '今日头条' },

@@ -2,7 +2,7 @@ import { Server } from 'socket.io';
 import { prisma } from '../db.js';
 import { searchTwitter } from '../services/twitter.js';
 import { searchBing, searchHackerNews, deduplicateResults, normalizeUrlForDeduplication, generateContentFingerprint } from '../services/search.js';
-import { searchSogou, searchBilibili, searchWeibo, detectAndFetchAccount } from '../services/chinaSearch.js';
+import { searchSogou, searchBilibili, searchWeibo, searchWeixin, searchZhihu, searchToutiao, searchDouyin, searchBaidu, detectAndFetchAccount } from '../services/chinaSearch.js';
 import { analyzeContent, expandKeyword, preMatchKeyword } from '../services/ai.js';
 import { sendHotspotEmail } from '../services/email.js';
 import { checkUrlQuality, isContentTooOld } from '../utils/urlValidator.js';
@@ -81,14 +81,24 @@ export async function runHotspotCheck(io: Server): Promise<void> {
         hackernewsResults,
         sogouResults,
         bilibiliResults,
-        weiboResults
+        weiboResults,
+        weixinResults,
+        zhihuResults,
+        toutiaoResults,
+        douyinResults,
+        baiduResults
       ] = await Promise.allSettled([
         searchTwitter(keyword.text),
         searchBing(keyword.text),
         searchHackerNews(keyword.text),
         searchSogou(keyword.text),
         searchBilibili(keyword.text),
-        searchWeibo(keyword.text)
+        searchWeibo(keyword.text),
+        searchWeixin(keyword.text),
+        searchZhihu(keyword.text),
+        searchToutiao(keyword.text),
+        searchDouyin(keyword.text),
+        searchBaidu(keyword.text)
       ]);
 
       const allResults: SearchResult[] = [];
@@ -105,7 +115,12 @@ export async function runHotspotCheck(io: Server): Promise<void> {
         { name: 'HackerNews', result: hackernewsResults },
         { name: 'Sogou', result: sogouResults },
         { name: 'Bilibili', result: bilibiliResults },
-        { name: 'Weibo', result: weiboResults }
+        { name: 'Weibo', result: weiboResults },
+        { name: 'Weixin', result: weixinResults },
+        { name: 'Zhihu', result: zhihuResults },
+        { name: 'Toutiao', result: toutiaoResults },
+        { name: 'Douyin', result: douyinResults },
+        { name: 'Baidu', result: baiduResults }
       ];
 
       for (const source of sources) {

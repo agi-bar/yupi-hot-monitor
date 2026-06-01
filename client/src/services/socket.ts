@@ -4,9 +4,18 @@ let socket: Socket | null = null;
 
 export function getSocket(): Socket {
   if (!socket) {
-    socket = io(window.location.origin, {
+    const socketUrl = import.meta.env.DEV 
+      ? 'http://localhost:3001'  // 开发环境：直接连接后端
+      : window.location.origin;   // 生产环境：使用同源
+    
+    socket = io(socketUrl, {
       path: '/socket.io',
-      transports: ['websocket', 'polling']
+      transports: ['websocket', 'polling'],
+      reconnection: true,
+      reconnectionAttempts: 5,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000,
+      timeout: 20000
     });
 
     socket.on('connect', () => {
