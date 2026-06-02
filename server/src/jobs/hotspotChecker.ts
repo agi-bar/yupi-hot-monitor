@@ -21,17 +21,23 @@ function filterByFreshness(results: SearchResult[]): SearchResult[] {
   });
 }
 
-// 按来源优先级排序：Twitter > 微博 > B站/账号内容 > 搜索引擎
+// 按来源优先级排序：Twitter > 微博 > B站/账号内容 > 搜索引擎 > 其他
 function prioritizeResults(results: SearchResult[]): SearchResult[] {
   const priorityMap: Record<string, number> = {
     twitter: 1,
     weibo: 2,
     bilibili: 3,
     hackernews: 4,
-    sogou: 5,
-    bing: 6,
-    google: 7,
-    duckduckgo: 8
+    zhihu: 5,
+    toutiao: 6,
+    douyin: 7,
+    weixin: 8,
+    sogou: 9,
+    baidu: 10,
+    bing: 11,
+    google: 12,
+    duckduckgo: 13,
+    channels: 14
   };
   return [...results].sort((a, b) => {
     return (priorityMap[a.source] || 99) - (priorityMap[b.source] || 99);
@@ -144,12 +150,16 @@ export async function runHotspotCheck(io: Server): Promise<void> {
       let otherProcessed = 0;
       const TWITTER_QUOTA = 15;
       const OTHER_QUOTA = 10;
+      const TOTAL_QUOTA = TWITTER_QUOTA + OTHER_QUOTA;
 
       for (const item of sortedResults) {
-        // 检查配额
-        if (item.source === 'twitter' && twitterProcessed >= TWITTER_QUOTA) continue;
-        if (item.source !== 'twitter' && otherProcessed >= OTHER_QUOTA) continue;
-        if (twitterProcessed + otherProcessed >= TWITTER_QUOTA + OTHER_QUOTA) break;
+        // 精确的配额检查
+        if (item.source === 'twitter') {
+          if (twitterProcessed >= TWITTER_QUOTA) continue;
+        } else {
+          if (otherProcessed >= OTHER_QUOTA) continue;
+        }
+        if (twitterProcessed + otherProcessed >= TOTAL_QUOTA) break;
         try {
           const contentFingerprint = generateContentFingerprint(item.title, item.content);
           
@@ -213,6 +223,12 @@ export async function runHotspotCheck(io: Server): Promise<void> {
             continue;
           }
 
+          // 重要性过滤：low 级别的内容不保存
+          if (analysis.importance === 'low') {
+            console.log(`  ⏭ Low importance: ${item.title.slice(0, 30)}...`);
+            continue;
+          }
+
           // 保存热点
           const hotspot = await prisma.hotspot.create({
             data: {
@@ -264,7 +280,7 @@ export async function runHotspotCheck(io: Server): Promise<void> {
           });
 
           // WebSocket 通知
-          io.to(`keyword:${keyword.text}`).emit('hotspot:new', hotspot);
+          io.to(`keyword:${keyword.text}}`).emit('hotspot:new', hotspot);
           io.emit('notification', {
             type: 'hotspot',
             title: '发现新热点',
@@ -280,6 +296,7 @@ export async function runHotspotCheck(io: Server): Promise<void> {
 
         } catch (error) {
           console.error(`  Error processing result:`, error);
+          continue;
         }
       }
 

@@ -59,20 +59,65 @@ export async function searchBing(query: string): Promise<SearchResult[]> {
 
     const $ = cheerio.load(response.data);
     const results: SearchResult[] = [];
+    
+    const datePatterns = [
+      /(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+(\d{4})/i,
+      /(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{4})/i,
+      /(\d{4})-(\d{2})-(\d{2})/,
+    ];
+    
+    const monthMap: Record<string, number> = {
+      jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5,
+      jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11
+    };
 
     $('li.b_algo').each((_, element) => {
       const titleElement = $(element).find('h2 a');
       const title = titleElement.text().trim();
       const url = titleElement.attr('href');
       const snippet = $(element).find('.b_caption p').text().trim();
+      const fullText = title + ' ' + snippet;
 
       if (title && url && url.startsWith('http')) {
+        let publishedAt = new Date();
+        let hasValidDate = false;
+        
+        for (const pattern of datePatterns) {
+          const match = fullText.match(pattern);
+          if (match) {
+            try {
+              let date: Date;
+              if (pattern.source.includes('Jan|Feb')) {
+                const day = parseInt(match[1]);
+                const monthStr = match[2].toLowerCase().substring(0, 3);
+                const year = parseInt(match[3]);
+                date = new Date(year, monthMap[monthStr] || 0, day);
+              } else {
+                date = new Date(match[0]);
+              }
+              if (!isNaN(date.getTime()) && date.getTime() > 0) {
+                publishedAt = date;
+                hasValidDate = true;
+                break;
+              }
+            } catch {
+              // 继续尝试下一个模式
+            }
+          }
+        }
+        
+        const cutoff = Date.now() - 365 * 24 * 60 * 60 * 1000; // 1年前
+        if (hasValidDate && publishedAt.getTime() < cutoff) {
+          console.log(`[Bing过滤] 内容日期 ${publishedAt.toLocaleDateString('zh-CN')} 超过1年 - ${title.substring(0, 30)}...`);
+          return;
+        }
+        
         results.push({
           title,
           content: snippet,
           url,
           source: 'bing',
-          publishedAt: new Date()
+          publishedAt
         });
       }
     });
