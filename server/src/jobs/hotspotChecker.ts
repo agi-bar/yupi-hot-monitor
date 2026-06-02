@@ -2,7 +2,7 @@ import { Server } from 'socket.io';
 import { prisma } from '../db.js';
 import { searchTwitter } from '../services/twitter.js';
 import { searchBing, searchHackerNews, deduplicateResults, normalizeUrlForDeduplication, generateContentFingerprint } from '../services/search.js';
-import { searchSogou, searchBilibili, searchWeibo, searchWeixin, searchZhihu, searchToutiao, searchDouyin, searchBaidu, detectAndFetchAccount } from '../services/chinaSearch.js';
+import { searchSogou, searchBilibili, searchWeibo, searchWeixin, searchZhihu, searchToutiao, searchDouyin, searchBaidu, detectAndFetchAccount, MAX_CONTENT_AGE_DAYS } from '../services/chinaSearch.js';
 import { analyzeContent, expandKeyword, preMatchKeyword } from '../services/ai.js';
 import { sendHotspotEmail } from '../services/email.js';
 import { checkUrlQuality, isContentTooOld } from '../utils/urlValidator.js';
@@ -11,6 +11,28 @@ import type { SearchResult } from '../types.js';
 // 新鲜度过滤：丢弃超过指定小时数的内容
 // Twitter 层面已通过 since: 限制了时间范围，这里只做兜底
 const MAX_AGE_HOURS = 7 * 24; // 7天
+
+// 热度分数计算：基于互动数据计算热度
+function calculateHeatScore(item: SearchResult): number {
+  const likes = item.likeCount ?? 0;
+  const retweets = item.retweetCount ?? 0;
+  const replies = item.replyCount ?? 0;
+  const comments = item.commentCount ?? 0;
+  const quotes = item.quoteCount ?? 0;
+  const views = item.viewCount ?? 0;
+  const raw = likes * 2 + retweets * 3 + replies * 1.5 + comments * 1.5 + quotes * 2 + views / 100;
+  if (raw <= 0) return 0;
+  return Math.min(100, Math.round(Math.log10(raw + 1) * 25));
+}
+
+// 获取热度等级
+function getHeatLevel(score: number): string {
+  if (score >= 80) return '爆';
+  if (score >= 60) return '热';
+  if (score >= 40) return '温';
+  if (score >= 20) return '凉';
+  return '冷';
+}
 
 function filterByFreshness(results: SearchResult[]): SearchResult[] {
   const cutoff = new Date(Date.now() - MAX_AGE_HOURS * 3600 * 1000);
@@ -187,7 +209,7 @@ export async function runHotspotCheck(io: Server): Promise<void> {
           }
 
           // 先做快速检查：URL质量检查（避免浪费AI资源
-          const urlQuality = checkUrlQuality(item.url, 180);
+          const urlQuality = checkUrlQuality(item.url, MAX_CONTENT_AGE_DAYS);
           if (!urlQuality.valid) {
             console.log(`  ❌ Invalid URL (${urlQuality.reason}): ${item.url.slice(0, 50)}...`);
             continue;
@@ -195,7 +217,7 @@ export async function runHotspotCheck(io: Server): Promise<void> {
 
           // 内容时间检测：从标题和内容中提取日期，过滤过旧的内容
           const fullText = item.title + '\n' + item.content;
-          const contentCheck = isContentTooOld(fullText, 180);
+          const contentCheck = isContentTooOld(fullText, MAX_CONTENT_AGE_DAYS);
           if (contentCheck.tooOld) {
             console.log(`  ❌ Outdated content (${contentCheck.reason}): ${item.title.slice(0, 30)}...`);
             continue;
@@ -209,6 +231,20 @@ export async function runHotspotCheck(io: Server): Promise<void> {
           if (!analysis.isReal) {
             console.log(`  ❌ Filtered fake/spam: ${item.title.slice(0, 30)}...`);
             continue;
+          }
+
+          // AI 提取的发布时间检查
+           if (analysis.publishedDate && analysis.dateConfidence) {
+             const aiPublishDate = new Date(analysis.publishedDate);
+             if (!isNaN(aiPublishDate.getTime())) {
+               item.publishedAt = aiPublishDate;
+               const cutoff = new Date(Date.now() - MAX_CONTENT_AGE_DAYS * 24 * 60 * 60 * 1000);
+               if (aiPublishDate < cutoff) {
+                console.log(`  ❌ AI detected outdated (${analysis.dateConfidence} confidence): ${aiPublishDate.toLocaleDateString('zh-CN')} - ${item.title.slice(0, 30)}...`);
+                continue;
+              }
+              console.log(`  📅 AI extracted date: ${aiPublishDate.toLocaleDateString('zh-CN')} (${analysis.dateConfidence})`);
+            }
           }
 
           // 相关性阈值：50 分以下过滤
@@ -226,6 +262,14 @@ export async function runHotspotCheck(io: Server): Promise<void> {
           // 重要性过滤：low 级别的内容不保存
           if (analysis.importance === 'low') {
             console.log(`  ⏭ Low importance: ${item.title.slice(0, 30)}...`);
+            continue;
+          }
+
+          // 热度过滤：凉、冷级别的内容不保存（热度分数 < 40）
+          const heatScore = calculateHeatScore(item);
+          const heatLevel = getHeatLevel(heatScore);
+          if (heatLevel === '凉' || heatLevel === '冷') {
+            console.log(`  ⏭ Low heat level (${heatLevel}): ${heatScore} - ${item.title.slice(0, 30)}...`);
             continue;
           }
 

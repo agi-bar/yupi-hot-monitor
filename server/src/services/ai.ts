@@ -133,6 +133,11 @@ ${matchHint}
 4. 评估热点的重要程度（对关注"${keyword}"的人来说有多重要）
 5. 用一句话说明此内容与"${keyword}"的关系（不是介绍内容本身，而是说"此内容与关键词的关联是什么"）
 6. 用一句话解释你的相关性打分理由
+7. 【重要】尝试从内容中提取发布日期（publishedDate）。搜索结果通常包含日期信息，请注意识别：
+   - 明确的日期格式：2024年1月15日、2024-01-15、Jan 15, 2024 等
+   - 相对时间描述：昨天、前天、上周、上个月等（需转换为具体日期）
+   - 文章内部提到的日期
+   - 如果无法确定日期，设置 publishedDate 为 null
 
 请以 JSON 格式输出：
 {
@@ -141,7 +146,9 @@ ${matchHint}
   "relevanceReason": "相关性打分理由...",
   "keywordMentioned": true/false,
   "importance": "low/medium/high/urgent",
-  "summary": "此内容与【${keyword}】的关联：..."
+  "summary": "此内容与【${keyword}】的关联：...",
+  "publishedDate": "YYYY-MM-DD格式的日期字符串，或null（如果无法确定）",
+  "dateConfidence": "high/medium/low（你对日期准确性的置信度）"
 }
 
 只输出 JSON，不要有其他内容。`;
@@ -187,6 +194,38 @@ export async function analyzeContent(content: string, keyword: string, preMatchR
     const jsonMatch = responseContent.match(/\{[\s\S]*\}/);
     if (jsonMatch) {
       const parsed = JSON.parse(jsonMatch[0]);
+      
+      // 解析日期
+      let publishedDate: Date | undefined;
+      if (parsed.publishedDate && parsed.publishedDate !== 'null') {
+        try {
+          const dateStr = String(parsed.publishedDate);
+          // 尝试多种日期格式
+          const datePatterns = [
+            /^(\d{4})-(\d{2})-(\d{2})/, // YYYY-MM-DD
+            /^(\d{4})年(\d{1,2})月(\d{1,2})日/, // YYYY年MM月DD日
+          ];
+          
+          for (const pattern of datePatterns) {
+            const match = dateStr.match(pattern);
+            if (match) {
+              if (pattern.source.startsWith('^\\d{4}-')) {
+                publishedDate = new Date(parseInt(match[1]), parseInt(match[2]) - 1, parseInt(match[3]));
+              } else {
+                publishedDate = new Date(parseInt(match[1]), parseInt(match[2]) - 1, parseInt(match[3]));
+              }
+              break;
+            }
+          }
+          
+          if (!publishedDate || isNaN(publishedDate.getTime())) {
+            publishedDate = new Date(dateStr);
+          }
+        } catch {
+          // 日期解析失败
+        }
+      }
+      
       return {
         isReal: Boolean(parsed.isReal),
         relevance: Math.min(100, Math.max(0, Number(parsed.relevance) || 0)),
@@ -195,7 +234,11 @@ export async function analyzeContent(content: string, keyword: string, preMatchR
         importance: ['low', 'medium', 'high', 'urgent'].includes(parsed.importance) 
           ? parsed.importance 
           : 'low',
-        summary: String(parsed.summary || '').slice(0, 150)
+        summary: String(parsed.summary || '').slice(0, 150),
+        publishedDate,
+        dateConfidence: ['high', 'medium', 'low'].includes(parsed.dateConfidence)
+          ? parsed.dateConfidence
+          : undefined
       };
     }
 

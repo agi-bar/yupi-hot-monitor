@@ -38,6 +38,8 @@ export interface AIAnalysis {
   keywordMentioned: boolean; // 内容中是否直接提及了关键词或其核心概念
   importance: 'low' | 'medium' | 'high' | 'urgent';
   summary: string; // 与关键词的关联说明（不是单纯的内容介绍）
+  publishedDate?: Date; // AI 提取的内容发布时间
+  dateConfidence?: 'high' | 'medium' | 'low'; // AI 对日期提取的置信度
 }
 
 export interface HotspotWithKeyword {
