@@ -1,6 +1,6 @@
 
 import { motion, AnimatePresence } from 'framer-motion';
-import { ExternalLink, ChevronDown, ChevronUp, ThermometerSun, Zap, Repeat2, MessageCircle, Quote, Eye, Clock, Activity, Target, FileText, Shield, ShieldAlert, User } from 'lucide-react';
+import { ExternalLink, ChevronDown, ChevronUp, ThermometerSun, Zap, Repeat2, MessageCircle, Quote, Eye, Clock, Activity, Target, FileText, Shield, ShieldAlert, User, Trash2 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import type { Hotspot } from '../services/api';
 import { relativeTime, formatDateTime, cleanWhitespace } from '../utils/relativeTime';
@@ -15,6 +15,7 @@ interface HotspotCardProps {
   isSelected?: boolean;
   onSelect?: (id: string) => void;
   showSelect?: boolean;
+  onDelete?: (id: string) => void;
 }
 
 function calcHeatScore(h: Hotspot): number {
@@ -94,7 +95,8 @@ export default function HotspotCard({
   onToggleContent,
   isSelected = false,
   onSelect,
-  showSelect = false
+  showSelect = false,
+  onDelete
 }: HotspotCardProps) {
   const heatScore = calcHeatScore(hotspot);
   const heat = getHeatLevel(heatScore);
@@ -312,15 +314,29 @@ export default function HotspotCard({
           )}
         </div>
         
-        <a
-          href={hotspot.url}
-          target="_blank"
-          rel="noopener noreferrer"
-          onClick={(e) => e.stopPropagation()}
-          className="p-2.5 rounded-xl bg-[var(--bg-elevated)] hover:bg-blue-500/20 text-[var(--text-muted)] hover:text-blue-500 dark:hover:text-blue-400 transition-all opacity-0 group-hover:opacity-100"
-        >
-          <ExternalLink className="w-4 h-4" />
-        </a>
+        <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+          {onDelete && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onDelete(hotspot.id);
+              }}
+              className="p-2.5 rounded-xl bg-[var(--bg-elevated)] hover:bg-red-500/20 text-[var(--text-muted)] hover:text-red-500 transition-all"
+              title="删除"
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
+          )}
+          <a
+            href={hotspot.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            className="p-2.5 rounded-xl bg-[var(--bg-elevated)] hover:bg-blue-500/20 text-[var(--text-muted)] hover:text-blue-500 dark:hover:text-blue-400 transition-all"
+          >
+            <ExternalLink className="w-4 h-4" />
+          </a>
+        </div>
       </div>
     </motion.div>
   );

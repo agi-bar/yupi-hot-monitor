@@ -233,9 +233,10 @@ describe.skipIf(!HAS_API_KEY)('AI 相关性判断准确度（真实 AI 调用）
       expect(result.keywordMentioned).toBe(tc.expectKeywordMentioned);
 
       // 验证过滤结果（模拟 hotspotChecker 的过滤逻辑）
+      // 修改后的阈值：relevance >= 40, 且 (keywordMentioned || relevance >= 55)
       const wouldPass = result.isReal 
-        && result.relevance >= 50 
-        && (result.keywordMentioned || result.relevance >= 65);
+        && result.relevance >= 40 
+        && (result.keywordMentioned || result.relevance >= 55);
       
       if (tc.expectPass) {
         expect(wouldPass).toBe(true);
@@ -260,8 +261,10 @@ describe('AI Fallback 行为（无 API Key）', () => {
         'Claude Sonnet 4.6',
         { matched: true, matchedTerms: ['Claude Sonnet 4.6'] }
       );
-      expect(result.relevance).toBe(50);
+      // 修改后的默认值：matched=true 时 relevance=55, importance=medium
+      expect(result.relevance).toBe(55);
       expect(result.keywordMentioned).toBe(true);
+      expect(result.importance).toBe('medium');
     } finally {
       process.env.OPENROUTER_API_KEY = originalKey || '';
     }
@@ -277,8 +280,10 @@ describe('AI Fallback 行为（无 API Key）', () => {
         'Claude Sonnet 4.6',
         { matched: false, matchedTerms: [] }
       );
-      expect(result.relevance).toBe(20);
+      // 修改后的默认值：matched=false 时 relevance=40, importance=medium
+      expect(result.relevance).toBe(40);
       expect(result.keywordMentioned).toBe(false);
+      expect(result.importance).toBe('medium');
     } finally {
       process.env.OPENROUTER_API_KEY = originalKey || '';
     }
@@ -299,8 +304,8 @@ describe.skipIf(!HAS_API_KEY)('评估报告汇总', () => {
       const result = await analyzeContent(tc.content, tc.keyword, preMatch);
 
       const wouldPass = result.isReal 
-        && result.relevance >= 50 
-        && (result.keywordMentioned || result.relevance >= 65);
+        && result.relevance >= 40 
+        && (result.keywordMentioned || result.relevance >= 55);
 
       const correct = wouldPass === tc.expectPass 
         && result.keywordMentioned === tc.expectKeywordMentioned

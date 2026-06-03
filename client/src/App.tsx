@@ -53,6 +53,11 @@ function App() {
   
   const [selectedHotspots, setSelectedHotspots] = useState<Set<string>>(new Set());
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
+  const [confirmDialogConfig, setConfirmDialogConfig] = useState<{
+    title: string;
+    message: string;
+    onConfirm: () => Promise<void>;
+  } | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const keywordsRef = useRef<Keyword[]>([]);
 
@@ -73,7 +78,7 @@ function App() {
 
       const [keywordsData, hotspotsData, statsData, notifData] = await Promise.all([
         keywordsApi.getAll(),
-        hotspotsApi.getAll(filterParams as any),
+        hotspotsApi.getAll(filterParams),
         hotspotsApi.getStats(),
         notificationsApi.getAll({ limit: 20 })
       ]);
@@ -167,8 +172,9 @@ function App() {
       setNewKeyword('');
       success('关键词添加成功');
       subscribeToKeywords([keyword.text]);
-    } catch (err: any) {
-      error(err.message || '添加失败');
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : '添加失败';
+      error(message);
     }
   };
 
@@ -251,11 +257,66 @@ function App() {
 
       setSelectedHotspots(new Set());
       await loadData();
-    } catch (err) {
+    } catch {
       error('删除操作失败');
     } finally {
       setIsDeleting(false);
     }
+  };
+
+  // 单个热点删除
+  const handleDeleteHotspot = (id: string) => {
+    setConfirmDialogConfig({
+      title: '确认删除',
+      message: '确定要删除这条热点数据吗？此操作不可撤销。',
+      onConfirm: async () => {
+        try {
+          await hotspotsApi.delete(id);
+          success('热点已删除');
+          await loadData();
+        } catch {
+          error('删除失败');
+        }
+      }
+    });
+    setShowConfirmDialog(true);
+  };
+
+  // 删除通知
+  const handleDeleteNotification = (id: string) => {
+    setConfirmDialogConfig({
+      title: '确认删除',
+      message: '确定要删除这条通知吗？',
+      onConfirm: async () => {
+        try {
+          await notificationsApi.delete(id);
+          setNotifications(prev => prev.filter(n => n.id !== id));
+          success('通知已删除');
+        } catch {
+          error('删除失败');
+        }
+      }
+    });
+    setShowConfirmDialog(true);
+  };
+
+  // 清空所有通知
+  const handleClearAllNotifications = () => {
+    setConfirmDialogConfig({
+      title: '清空所有通知',
+      message: '确定要清空所有通知吗？此操作不可撤销。',
+      onConfirm: async () => {
+        try {
+          await notificationsApi.clear();
+          setNotifications([]);
+          setUnreadCount(0);
+          success('所有通知已清空');
+        } catch {
+          error('清空失败');
+        }
+      }
+    });
+    setShowConfirmDialog(true);
   };
 
   const handleMarkAllRead = async () => {
@@ -396,11 +457,14 @@ function App() {
 
       <ConfirmDialog
         isOpen={showConfirmDialog}
-        onClose={() => setShowConfirmDialog(false)}
-        onConfirm={handleDeleteHotspots}
-        title="确认删除"
-        message={`确定要删除选中的 ${selectedHotspots.size} 条热点数据吗？此操作不可撤销。`}
-        confirmText="确认删除"
+        onClose={() => {
+          setShowConfirmDialog(false);
+          setConfirmDialogConfig(null);
+        }}
+        onConfirm={confirmDialogConfig?.onConfirm || handleDeleteHotspots}
+        title={confirmDialogConfig?.title || '确认删除'}
+        message={confirmDialogConfig?.message || `确定要删除选中的 ${selectedHotspots.size} 条热点数据吗？此操作不可撤销。`}
+        confirmText="确认"
         cancelText="取消"
         danger={true}
       />
@@ -480,11 +544,21 @@ function App() {
                     >
                       <div className="flex items-center justify-between p-4 border-b border-[var(--border-subtle)]">
                         <h3 className="font-medium text-[var(--text-primary)]">通知</h3>
-                        {unreadCount > 0 && (
-                          <button onClick={handleMarkAllRead} className="text-xs text-blue-500 hover:text-blue-600 dark:text-blue-400">
-                            全部已读
-                          </button>
-                        )}
+                        <div className="flex items-center gap-2">
+                          {notifications.length > 0 && (
+                            <button 
+                              onClick={handleClearAllNotifications} 
+                              className="text-xs text-red-500 hover:text-red-600 dark:text-red-400"
+                            >
+                              清空
+                            </button>
+                          )}
+                          {unreadCount > 0 && (
+                            <button onClick={handleMarkAllRead} className="text-xs text-blue-500 hover:text-blue-600 dark:text-blue-400">
+                              全部已读
+                            </button>
+                          )}
+                        </div>
                       </div>
                       <div className="max-h-80 overflow-y-auto">
                         {notifications.length === 0 ? (
@@ -492,9 +566,20 @@ function App() {
                         ) : (
                           <div className="divide-y divide-[var(--border-subtle)]">
                             {notifications.slice(0, 5).map(n => (
-                              <div key={n.id} className={cn("p-4 transition-colors hover:bg-[var(--bg-hover)]", !n.isRead && 'bg-blue-500/5')}>
-                                <p className="text-sm font-medium text-[var(--text-primary)]">{n.title}</p>
-                                <p className="text-xs text-[var(--text-muted)] mt-1 line-clamp-2">{n.content}</p>
+                              <div key={n.id} className={cn("p-4 transition-colors hover:bg-[var(--bg-hover)] group", !n.isRead && 'bg-blue-500/5')}>
+                                <div className="flex items-start justify-between gap-2">
+                                  <div className="flex-1 min-w-0">
+                                    <p className="text-sm font-medium text-[var(--text-primary)]">{n.title}</p>
+                                    <p className="text-xs text-[var(--text-muted)] mt-1 line-clamp-2">{n.content}</p>
+                                  </div>
+                                  <button
+                                    onClick={() => handleDeleteNotification(n.id)}
+                                    className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-red-500/10 text-[var(--text-muted)] hover:text-red-500 transition-all flex-shrink-0"
+                                    title="删除"
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </button>
+                                </div>
                               </div>
                             ))}
                           </div>
@@ -677,6 +762,7 @@ function App() {
                       isSelected={selectedHotspots.has(hotspot.id)}
                       onSelect={handleSelectHotspot}
                       showSelect={true}
+                      onDelete={handleDeleteHotspot}
                     />
                   ))}
                 </div>

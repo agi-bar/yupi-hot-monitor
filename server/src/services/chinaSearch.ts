@@ -717,54 +717,52 @@ export async function searchZhihu(query: string): Promise<SearchResult[]> {
 }
 
 // ============================================================
-// 今日头条搜索（通过网页抓取）
+// 今日头条搜索（通过搜狗搜索，兼容性好）
 // ============================================================
 export async function searchToutiao(query: string): Promise<SearchResult[]> {
   await toutiaoLimiter.wait();
 
   try {
-    const response = await axios.get('https://so.toutiao.com/search', {
+    // 使用搜狗搜索指定 site:toutiao.com，更稳定
+    const response = await axios.get('https://www.sogou.com/web', {
       params: {
-        keyword: query,
-        source: 'input'
+        query: `site:toutiao.com ${query}`,
+        ie: 'utf-8'
       },
       headers: {
         'User-Agent': getRandomUserAgent(),
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-        'Referer': 'https://so.toutiao.com/'
+        'Referer': 'https://www.sogou.com/'
       },
-      timeout: 15000
+      timeout: 15000,
+      maxRedirects: 5
     });
 
     const $ = cheerio.load(response.data);
     const results: SearchResult[] = [];
     const seenUrls = new Set<string>();
 
-    $('a[href*="toutiao.com"]').each((_, element) => {
-      const title = $(element).text().trim();
-      let url = $(element).attr('href') || '';
+    $('.vrwrap, .rb').each((_, element) => {
+      const titleElement = $(element).find('h3 a, .vr-title a').first();
+      const title = titleElement.text().trim();
+      let url = titleElement.attr('href') || '';
 
       if (!title || title.length < 5) return;
 
-      // 解析重定向 URL
-      if (url.includes('/search/jump?url=')) {
-        try {
-          const urlMatch = url.match(/url=([^&]+)/);
-          if (urlMatch) {
-            url = decodeURIComponent(urlMatch[1]);
-          }
-        } catch {
-          // 保持原 URL
-        }
+      // 提取搜狗跳转链接中的真实URL
+      if (url.includes('/link?url=')) {
+        url = extractSogouRedirectUrl(url);
       }
 
-      if (!url || seenUrls.has(url)) return;
+      if (!url || seenUrls.has(url) || !url.includes('toutiao.com')) return;
       seenUrls.add(url);
+
+      const snippet = $(element).find('.space-txt, .str-text-info, p').first().text().trim();
 
       results.push({
         title,
-        content: title,
+        content: snippet || title,
         url,
         source: 'toutiao' as const,
         publishedAt: new Date()
@@ -780,46 +778,52 @@ export async function searchToutiao(query: string): Promise<SearchResult[]> {
 }
 
 // ============================================================
-// 抖音搜索（通过网页抓取）
+// 抖音搜索（通过搜狗搜索，兼容性好）
 // ============================================================
 export async function searchDouyin(query: string): Promise<SearchResult[]> {
   await douyinLimiter.wait();
 
   try {
-    const response = await axios.get('https://www.douyin.com/search', {
+    // 使用搜狗搜索指定 site:douyin.com，更稳定
+    const response = await axios.get('https://www.sogou.com/web', {
       params: {
-        keyword: query,
-        type: 'video'
+        query: `site:douyin.com ${query}`,
+        ie: 'utf-8'
       },
       headers: {
         'User-Agent': getRandomUserAgent(),
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-        'Referer': 'https://www.douyin.com/'
+        'Referer': 'https://www.sogou.com/'
       },
-      timeout: 15000
+      timeout: 15000,
+      maxRedirects: 5
     });
 
     const $ = cheerio.load(response.data);
     const results: SearchResult[] = [];
     const seenUrls = new Set<string>();
 
-    $('a[href*="douyin.com"]').each((_, element) => {
-      const title = $(element).text().trim();
-      let url = $(element).attr('href') || '';
+    $('.vrwrap, .rb').each((_, element) => {
+      const titleElement = $(element).find('h3 a, .vr-title a').first();
+      const title = titleElement.text().trim();
+      let url = titleElement.attr('href') || '';
 
       if (!title || title.length < 3) return;
 
-      if (url.startsWith('/')) {
-        url = `https://www.douyin.com${url}`;
+      // 提取搜狗跳转链接中的真实URL
+      if (url.includes('/link?url=')) {
+        url = extractSogouRedirectUrl(url);
       }
 
-      if (!url || seenUrls.has(url)) return;
+      if (!url || seenUrls.has(url) || !url.includes('douyin.com')) return;
       seenUrls.add(url);
+
+      const snippet = $(element).find('.space-txt, .str-text-info, p').first().text().trim();
 
       results.push({
         title,
-        content: title,
+        content: snippet || title,
         url,
         source: 'douyin' as const,
         publishedAt: new Date()

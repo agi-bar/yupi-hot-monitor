@@ -77,6 +77,17 @@ router.patch('/read-all', async (req, res) => {
   }
 });
 
+// 清空所有通知（必须在 /:id 之前定义）
+router.delete('/', async (req, res) => {
+  try {
+    await prisma.notification.deleteMany({});
+    res.json({ message: 'All notifications deleted' });
+  } catch (error) {
+    console.error('Error clearing notifications:', error);
+    res.status(500).json({ error: 'Failed to clear notifications' });
+  }
+});
+
 // 删除通知
 router.delete('/:id', async (req, res) => {
   try {
@@ -91,17 +102,6 @@ router.delete('/:id', async (req, res) => {
     }
     console.error('Error deleting notification:', error);
     res.status(500).json({ error: 'Failed to delete notification' });
-  }
-});
-
-// 清空所有通知
-router.delete('/', async (req, res) => {
-  try {
-    await prisma.notification.deleteMany({});
-    res.json({ message: 'All notifications deleted' });
-  } catch (error) {
-    console.error('Error clearing notifications:', error);
-    res.status(500).json({ error: 'Failed to clear notifications' });
   }
 });
 
