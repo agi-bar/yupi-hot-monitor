@@ -175,10 +175,16 @@ function extractSogouRedirectUrl(url: string): string {
         // URL解码失败
       }
       
-      // 解码失败时直接返回原始URL，避免重复拼接域名
-      return url;
+      // 解码失败时：如果URL是相对路径则拼接域名，否则直接返回
+      if (url.startsWith('http')) {
+        return url;
+      }
+      return `https://weixin.sogou.com${url}`;
     } catch {
-      return url;
+      if (url.startsWith('http')) {
+        return url;
+      }
+      return `https://weixin.sogou.com${url}`;
     }
   }
   return url;
@@ -584,13 +590,31 @@ export async function searchWeibo(query: string): Promise<SearchResult[]> {
       // 2. 任意查询词的部分字符匹配（处理缩写、简称）
       // 例如查询 "英伟达" 匹配 "NVIDIA"
       for (const qw of queryWords) {
-        // 提取查询词的每个字符（汉字）或每个单词（英文）
-        const chars = qw.match(/[\u4e00-\u9fa5]|[a-zA-Z]+/g) || [];
-        if (chars.length >= 2) {
-          // 至少2个字符/单词在话题中出现
-          const matchCount = chars.filter(c => topicLower.includes(c.toLowerCase())).length;
-          if (matchCount >= Math.min(2, chars.length)) {
-            return true;
+        // 判断是否为纯英文词
+        const isEnglishWord = /^[a-zA-Z]+$/.test(qw);
+        
+        if (isEnglishWord) {
+          // 英文词：使用单词边界匹配，避免 "apple" 匹配 "pineapple"
+          const wordBoundaryMatch = new RegExp(`\\b${qw}\\b`, 'i').test(topicLower);
+          if (wordBoundaryMatch) return true;
+          
+          // 英文缩写匹配：如 "AI" 匹配 "artificial intelligence"
+          if (qw.length <= 3) {
+            // 短词尝试作为词根匹配
+            const rootMatch = topicLower.includes(qw.toLowerCase());
+            if (rootMatch && topicLower.length < qw.length * 10) {
+              return true;
+            }
+          }
+        } else {
+          // 中文词：提取每个字符进行匹配
+          const chars = qw.match(/[\u4e00-\u9fa5]/g) || [];
+          if (chars.length >= 2) {
+            // 至少2个字符在话题中出现
+            const matchCount = chars.filter(c => topicLower.includes(c)).length;
+            if (matchCount >= Math.min(2, chars.length)) {
+              return true;
+            }
           }
         }
       }

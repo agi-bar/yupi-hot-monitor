@@ -2,13 +2,13 @@ import type { SearchResult, Tweet, TwitterSearchResponse, TwitterFilterConfig } 
 
 const TWITTER_API_BASE = 'https://api.twitterapi.io';
 
-// 质量过滤阈值（按用户方案设定）
+// 质量过滤阈值（放宽以提高收录率）
 export const TWITTER_FILTER_CONFIG: TwitterFilterConfig = {
-  minLikes: 10,
-  minRetweets: 5,
-  minViews: 500,
-  minFollowers: 100,
-  onlyOriginalTweets: true
+  minLikes: 3,       // 从 10 降低到 3
+  minRetweets: 2,     // 从 5 降低到 2
+  minViews: 100,      // 从 500 降低到 100
+  minFollowers: 50,   // 从 100 降低到 50
+  onlyOriginalTweets: false  // 改为 false，保留转推中带评论的内容
 };
 
 // ============================================================

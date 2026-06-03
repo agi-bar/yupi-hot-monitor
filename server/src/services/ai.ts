@@ -117,21 +117,27 @@ export function preMatchKeyword(text: string, expandedKeywords: string[]): { mat
 function buildAnalysisPrompt(keyword: string, preMatchResult: { matched: boolean; matchedTerms: string[] }): string {
   const matchHint = preMatchResult.matched 
     ? `\n注意：文本预匹配发现内容中包含以下关键词变体：${preMatchResult.matchedTerms.join('、')}` 
-    : `\n注意：文本预匹配发现内容中未直接提及关键词"${keyword}"的任何变体，请特别严格审核相关性。`;
+    : `\n注意：文本预匹配发现内容中未直接提及关键词"${keyword}"的任何变体，请结合领域知识判断相关性。`;
 
-  return `你是一个热点内容精准匹配专家。你的任务是判断一段内容是否与指定的监控关键词【${keyword}】直接相关。
+  return `你是一个热点内容匹配专家。你的任务是判断一段内容是否与指定的监控关键词【${keyword}】相关。
 
 ${matchHint}
 
 分析要点：
-1. 判断是否为真实有价值的信息（排除标题党、假新闻、营销软文）
-2. 判断内容是否【直接】涉及关键词"${keyword}"。注意：
-   - 仅仅属于同一领域但未提及关键词的内容，相关性应低于 40 分
-   - 内容必须直接讨论、提及或与"${keyword}"有实质关联才能获得 60 分以上
-   - 只是间接沾边（如同类产品、同领域但不同主题）应给 30-50 分
+1. 判断是否为真实有价值的信息（排除明显标题党、假新闻、营销软文）
+2. 判断内容是否与关键词"${keyword}"相关。评分标准：
+   - 【80-100分】内容直接讨论、提及关键词或其核心变体
+   - 【60-79分】内容涉及关键词的主要方面、竞品对比、相关事件
+   - 【40-59分】内容属于同一领域，可能对关注"${keyword}"的用户有价值
+   - 【20-39分】内容与关键词有松散关联，如同属一个大领域
+   - 【0-19分】内容与关键词无关，纯属泛泛内容
 3. 判断内容中是否直接提及了"${keyword}"或其等价表述（keywordMentioned）
-4. 评估热点的重要程度（对关注"${keyword}"的人来说有多重要）
-5. 用一句话说明此内容与"${keyword}"的关系（不是介绍内容本身，而是说"此内容与关键词的关联是什么"）
+4. 评估热点的重要程度：
+   - urgent: 重大突发、紧急事件
+   - high: 重要进展、重大更新
+   - medium: 一般新闻、常规更新
+   - low: 小动态、边缘信息
+5. 用一句话说明此内容与"${keyword}"的关系
 6. 用一句话解释你的相关性打分理由
 7. 【重要】尝试从内容中提取发布日期（publishedDate）。搜索结果通常包含日期信息，请注意识别：
    - 明确的日期格式：2024年1月15日、2024-01-15、Jan 15, 2024 等
@@ -162,10 +168,10 @@ export async function analyzeContent(content: string, keyword: string, preMatchR
     console.warn('Minimax API key not configured, using fallback analysis');
     return {
       isReal: true,
-      relevance: matchResult.matched ? 50 : 20,
+      relevance: matchResult.matched ? 55 : 40,
       relevanceReason: '未配置 AI 服务，使用默认分数',
       keywordMentioned: matchResult.matched,
-      importance: 'low',
+      importance: 'medium',
       summary: content.slice(0, 50) + '...'
     };
   }
@@ -255,10 +261,10 @@ export async function analyzeContent(content: string, keyword: string, preMatchR
     }
     return {
       isReal: true,
-      relevance: matchResult.matched ? 65 : 50,
+      relevance: matchResult.matched ? 55 : 40,
       relevanceReason: 'AI 分析失败，使用默认分数',
       keywordMentioned: matchResult.matched,
-      importance: 'low',
+      importance: 'medium',
       summary: content.slice(0, 50) + '...'
     };
   }

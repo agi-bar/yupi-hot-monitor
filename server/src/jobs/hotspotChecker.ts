@@ -94,6 +94,7 @@ export async function runHotspotCheck(io: Server): Promise<void> {
     keywordMentioned: 0,
     importance: 0,
     heatLevel: 0,
+    quota: 0,
     error: 0
   };
 
@@ -181,21 +182,30 @@ export async function runHotspotCheck(io: Server): Promise<void> {
       console.log(`  Total: ${allResults.length} raw → ${uniqueResults.length} unique → ${freshResults.length} fresh (within ${MAX_AGE_HOURS}h)`);
 
       // 处理结果：Twitter 优先多给配额
-      // Twitter 最多处理 15 条，其他来源共享 10 条配额
+      // Twitter 最多处理 20 条，其他来源共享 15 条配额（增加以提高收录率）
       let twitterProcessed = 0;
       let otherProcessed = 0;
-      const TWITTER_QUOTA = 15;
-      const OTHER_QUOTA = 10;
+      const TWITTER_QUOTA = 20;  // 从 15 增加到 20
+      const OTHER_QUOTA = 15;     // 从 10 增加到 15
       const TOTAL_QUOTA = TWITTER_QUOTA + OTHER_QUOTA;
 
       for (const item of sortedResults) {
         // 精确的配额检查
         if (item.source === 'twitter') {
-          if (twitterProcessed >= TWITTER_QUOTA) continue;
+          if (twitterProcessed >= TWITTER_QUOTA) {
+            filterStats.quota++;
+            continue;
+          }
         } else {
-          if (otherProcessed >= OTHER_QUOTA) continue;
+          if (otherProcessed >= OTHER_QUOTA) {
+            filterStats.quota++;
+            continue;
+          }
         }
-        if (twitterProcessed + otherProcessed >= TOTAL_QUOTA) break;
+        if (twitterProcessed + otherProcessed >= TOTAL_QUOTA) {
+          filterStats.quota++;
+          break;
+        }
         totalProcessed++;
         
         try {
@@ -351,7 +361,7 @@ export async function runHotspotCheck(io: Server): Promise<void> {
           });
 
           // WebSocket 通知
-          io.to(`keyword:${keyword.text}}`).emit('hotspot:new', hotspot);
+          io.to(`keyword:${keyword.text}`).emit('hotspot:new', hotspot);
           io.emit('notification', {
             type: 'hotspot',
             title: '发现新热点',
@@ -382,12 +392,15 @@ export async function runHotspotCheck(io: Server): Promise<void> {
   }
 
   // 输出汇总统计
+  const totalItems = totalProcessed + totalFiltered;
   console.log('\n📊 Filter Statistics:');
+  console.log(`  Total items: ${totalItems}`);
   console.log(`  Total processed: ${totalProcessed}`);
   console.log(`  Total filtered: ${totalFiltered}`);
   console.log(`  Saved as hotspot: ${newHotspotsCount}`);
   console.log(`  Pass rate: ${totalProcessed > 0 ? ((newHotspotsCount / totalProcessed) * 100).toFixed(1) : 0}%`);
   console.log('\n  Filter breakdown:');
+  console.log(`    - Quota limit: ${filterStats.quota}`);
   console.log(`    - Duplicate: ${filterStats.duplicate}`);
   console.log(`    - URL quality: ${filterStats.urlQuality}`);
   console.log(`    - Content age: ${filterStats.contentAge}`);
