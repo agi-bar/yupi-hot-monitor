@@ -82,6 +82,20 @@ export async function runHotspotCheck(io: Server): Promise<void> {
   console.log(`Checking ${keywords.length} keywords...`);
 
   let newHotspotsCount = 0;
+  let totalProcessed = 0;
+  let totalFiltered = 0;
+  const filterStats = {
+    urlQuality: 0,
+    contentAge: 0,
+    duplicate: 0,
+    notReal: 0,
+    aiDate: 0,
+    relevance: 0,
+    keywordMentioned: 0,
+    importance: 0,
+    heatLevel: 0,
+    error: 0
+  };
 
   for (const keyword of keywords) {
     console.log(`\n📎 Checking keyword: "${keyword.text}"`);
@@ -182,6 +196,8 @@ export async function runHotspotCheck(io: Server): Promise<void> {
           if (otherProcessed >= OTHER_QUOTA) continue;
         }
         if (twitterProcessed + otherProcessed >= TOTAL_QUOTA) break;
+        totalProcessed++;
+        
         try {
           const contentFingerprint = generateContentFingerprint(item.title, item.content);
           
@@ -205,13 +221,16 @@ export async function runHotspotCheck(io: Server): Promise<void> {
           }
 
           if (existing) {
+            filterStats.duplicate++;
+            totalFiltered++;
             continue;
           }
 
           // 先做快速检查：URL质量检查（避免浪费AI资源
           const urlQuality = checkUrlQuality(item.url, MAX_CONTENT_AGE_DAYS);
           if (!urlQuality.valid) {
-            console.log(`  ❌ Invalid URL (${urlQuality.reason}): ${item.url.slice(0, 50)}...`);
+            filterStats.urlQuality++;
+            totalFiltered++;
             continue;
           }
 
@@ -219,7 +238,8 @@ export async function runHotspotCheck(io: Server): Promise<void> {
           const fullText = item.title + '\n' + item.content;
           const contentCheck = isContentTooOld(fullText, MAX_CONTENT_AGE_DAYS);
           if (contentCheck.tooOld) {
-            console.log(`  ❌ Outdated content (${contentCheck.reason}): ${item.title.slice(0, 30)}...`);
+            filterStats.contentAge++;
+            totalFiltered++;
             continue;
           }
 
@@ -229,47 +249,54 @@ export async function runHotspotCheck(io: Server): Promise<void> {
 
           // 只保存真实且相关的热点
           if (!analysis.isReal) {
-            console.log(`  ❌ Filtered fake/spam: ${item.title.slice(0, 30)}...`);
+            filterStats.notReal++;
+            totalFiltered++;
             continue;
           }
 
           // AI 提取的发布时间检查
-           if (analysis.publishedDate && analysis.dateConfidence) {
-             const aiPublishDate = new Date(analysis.publishedDate);
-             if (!isNaN(aiPublishDate.getTime())) {
-               item.publishedAt = aiPublishDate;
-               const cutoff = new Date(Date.now() - MAX_CONTENT_AGE_DAYS * 24 * 60 * 60 * 1000);
-               if (aiPublishDate < cutoff) {
-                console.log(`  ❌ AI detected outdated (${analysis.dateConfidence} confidence): ${aiPublishDate.toLocaleDateString('zh-CN')} - ${item.title.slice(0, 30)}...`);
+          if (analysis.publishedDate && analysis.dateConfidence) {
+            const aiPublishDate = new Date(analysis.publishedDate);
+            if (!isNaN(aiPublishDate.getTime())) {
+              item.publishedAt = aiPublishDate;
+              const cutoff = new Date(Date.now() - MAX_CONTENT_AGE_DAYS * 24 * 60 * 60 * 1000);
+              if (aiPublishDate < cutoff) {
+                filterStats.aiDate++;
+                totalFiltered++;
                 continue;
               }
-              console.log(`  📅 AI extracted date: ${aiPublishDate.toLocaleDateString('zh-CN')} (${analysis.dateConfidence})`);
             }
           }
 
-          // 相关性阈值：50 分以下过滤
-          if (analysis.relevance < 50) {
-            console.log(`  ⏭ Low relevance (${analysis.relevance}): ${item.title.slice(0, 30)}...`);
+          // 相关性阈值：从 50 降低到 40，提高收录率
+          if (analysis.relevance < 40) {
+            filterStats.relevance++;
+            totalFiltered++;
             continue;
           }
 
-          // 额外规则：关键词未被提及且相关性不足 65 → 过滤
-          if (!analysis.keywordMentioned && analysis.relevance < 65) {
-            console.log(`  ⏭ Keyword not mentioned & relevance < 65 (${analysis.relevance}): ${item.title.slice(0, 30)}...`);
+          // 额外规则：关键词未被提及且相关性不足 55（从 65 降低）→ 过滤
+          if (!analysis.keywordMentioned && analysis.relevance < 55) {
+            filterStats.keywordMentioned++;
+            totalFiltered++;
             continue;
           }
 
-          // 重要性过滤：low 级别的内容不保存
-          if (analysis.importance === 'low') {
-            console.log(`  ⏭ Low importance: ${item.title.slice(0, 30)}...`);
-            continue;
-          }
-
-          // 热度过滤：凉、冷级别的内容不保存（热度分数 < 40）
+          // 重要性过滤：仅 urgent 级别才会被直接排除，low/medium/high 都保留
+          // 将 importance === 'low' 改为 medium 以下且无热度时过滤
           const heatScore = calculateHeatScore(item);
           const heatLevel = getHeatLevel(heatScore);
-          if (heatLevel === '凉' || heatLevel === '冷') {
-            console.log(`  ⏭ Low heat level (${heatLevel}): ${heatScore} - ${item.title.slice(0, 30)}...`);
+          if (analysis.importance === 'low' && heatLevel === '冷') {
+            filterStats.importance++;
+            totalFiltered++;
+            continue;
+          }
+
+          // 热度过滤：只有"冷"级别才过滤（从"凉/冷"放宽为仅"冷"）
+          // 微信公众号文章通常没有公开的互动数据，跳过热度过滤
+          if (item.source !== 'weixin' && heatLevel === '冷') {
+            filterStats.heatLevel++;
+            totalFiltered++;
             continue;
           }
 
@@ -311,7 +338,7 @@ export async function runHotspotCheck(io: Server): Promise<void> {
           newHotspotsCount++;
           if (item.source === 'twitter') twitterProcessed++;
           else otherProcessed++;
-          console.log(`  ✅ New hotspot [${item.source}]: ${hotspot.title.slice(0, 40)}... (${analysis.importance})`);
+          console.log(`  ✅ New hotspot [${item.source}]: ${hotspot.title.slice(0, 40)}... (importance=${analysis.importance}, relevance=${analysis.relevance}, heat=${heatLevel})`);
 
           // 创建通知
           await prisma.notification.create({
@@ -339,6 +366,8 @@ export async function runHotspotCheck(io: Server): Promise<void> {
           }
 
         } catch (error) {
+          filterStats.error++;
+          totalFiltered++;
           console.error(`  Error processing result:`, error);
           continue;
         }
@@ -351,6 +380,24 @@ export async function runHotspotCheck(io: Server): Promise<void> {
       console.error(`Error checking keyword "${keyword.text}":`, error);
     }
   }
+
+  // 输出汇总统计
+  console.log('\n📊 Filter Statistics:');
+  console.log(`  Total processed: ${totalProcessed}`);
+  console.log(`  Total filtered: ${totalFiltered}`);
+  console.log(`  Saved as hotspot: ${newHotspotsCount}`);
+  console.log(`  Pass rate: ${totalProcessed > 0 ? ((newHotspotsCount / totalProcessed) * 100).toFixed(1) : 0}%`);
+  console.log('\n  Filter breakdown:');
+  console.log(`    - Duplicate: ${filterStats.duplicate}`);
+  console.log(`    - URL quality: ${filterStats.urlQuality}`);
+  console.log(`    - Content age: ${filterStats.contentAge}`);
+  console.log(`    - Not real/spam: ${filterStats.notReal}`);
+  console.log(`    - AI date outdated: ${filterStats.aiDate}`);
+  console.log(`    - Low relevance (<40): ${filterStats.relevance}`);
+  console.log(`    - Keyword not mentioned & relevance <55: ${filterStats.keywordMentioned}`);
+  console.log(`    - Low importance & cold: ${filterStats.importance}`);
+  console.log(`    - Cold heat level: ${filterStats.heatLevel}`);
+  console.log(`    - Processing errors: ${filterStats.error}`);
 
   console.log(`\n✨ Hotspot check completed. Found ${newHotspotsCount} new hotspots.`);
 }

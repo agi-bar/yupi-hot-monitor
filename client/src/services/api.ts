@@ -140,7 +140,13 @@ export const hotspotsApi = {
     }),
   
   delete: (id: string) => 
-    request<void>(`/hotspots/${id}`, { method: 'DELETE' })
+    request<void>(`/hotspots/${id}`, { method: 'DELETE' }),
+  
+  deleteBatch: (ids: string[]) =>
+    request<{ message: string; deletedCount: number }>('/hotspots/batch', {
+      method: 'DELETE',
+      body: JSON.stringify({ ids })
+    })
 };
 
 // Notifications API

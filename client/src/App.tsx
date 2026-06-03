@@ -244,28 +244,14 @@ function App() {
     setIsDeleting(true);
     try {
       const ids = Array.from(selectedHotspots);
-      let successCount = 0;
-      let failCount = 0;
+      
+      const result = await hotspotsApi.deleteBatch(ids);
 
-      for (const id of ids) {
-        try {
-          await hotspotsApi.delete(id);
-          successCount++;
-        } catch {
-          failCount++;
-        }
-      }
-
-      if (successCount > 0) {
-        success(`成功删除 ${successCount} 条热点数据`);
-      }
-      if (failCount > 0) {
-        error(`删除失败 ${failCount} 条热点数据`);
-      }
+      success(`成功删除 ${result.deletedCount} 条热点数据`);
 
       setSelectedHotspots(new Set());
       await loadData();
-    } catch {
+    } catch (err) {
       error('删除操作失败');
     } finally {
       setIsDeleting(false);
@@ -430,8 +416,8 @@ function App() {
                 <div className="absolute -bottom-1 -right-1 w-3 h-3 bg-emerald-500 rounded-full border-2 border-[var(--bg-base)] animate-pulse" />
               </div>
               <div>
-                <h1 className="text-lg font-semibold text-[var(--text-primary)]">HotPulse</h1>
-                <p className="text-xs text-[var(--text-muted)]">AI 热点雷达</p>
+                <h1 className="text-lg font-semibold text-[var(--text-primary)]">越疆情报局</h1>
+                <p className="text-xs text-[var(--text-muted)]">协作机器人</p>
               </div>
             </div>
 
@@ -464,7 +450,16 @@ function App() {
 
               <div className="relative">
                 <button
-                  onClick={() => setShowNotifications(!showNotifications)}
+                  onClick={() => {
+                    const newState = !showNotifications;
+                    setShowNotifications(newState);
+                    if (newState && unreadCount > 0) {
+                      notificationsApi.markAllAsRead().then(() => {
+                        setUnreadCount(0);
+                        setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
+                      });
+                    }
+                  }}
                   className="relative p-2.5 rounded-xl bg-[var(--bg-elevated)] hover:bg-[var(--bg-hover)] border border-[var(--border-default)] transition-all"
                 >
                   <Bell className="w-5 h-5 text-[var(--text-secondary)]" />

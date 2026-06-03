@@ -149,12 +149,36 @@ function extractSogouRedirectUrl(url: string): string {
   if (url.includes('/link?url=')) {
     try {
       const urlParams = new URLSearchParams(url.split('?')[1]);
-      const redirectUrl = decodeURIComponent(urlParams.get('url') || '');
+      const encodedUrl = urlParams.get('url') || '';
+      
+      let redirectUrl = decodeURIComponent(encodedUrl);
+      
       if (redirectUrl && redirectUrl.startsWith('http')) {
         return redirectUrl;
       }
+      
+      try {
+        redirectUrl = Buffer.from(encodedUrl, 'base64').toString('utf-8');
+        if (redirectUrl && redirectUrl.startsWith('http')) {
+          return redirectUrl;
+        }
+      } catch {
+        // base64解码失败
+      }
+      
+      try {
+        redirectUrl = decodeURIComponent(encodedUrl.replace(/-/g, '+').replace(/_/g, '/'));
+        if (redirectUrl && redirectUrl.startsWith('http')) {
+          return redirectUrl;
+        }
+      } catch {
+        // URL解码失败
+      }
+      
+      // 解码失败时直接返回原始URL，避免重复拼接域名
+      return url;
     } catch {
-      // 解析失败，返回原 URL
+      return url;
     }
   }
   return url;
@@ -544,18 +568,41 @@ export async function searchWeibo(query: string): Promise<SearchResult[]> {
     const hotItems: WeiboHotItem[] = response.data.data.realtime;
     const results: SearchResult[] = [];
     const queryLower = query.toLowerCase();
-    const queryWords = queryLower.split(/\s+/).filter(w => w.length > 0);
+    // 支持多种分隔符拆分查询词
+    const queryWords = queryLower.split(/[\s\-_\/\\·#,，、]+/).filter(w => w.length >= 2);
+    
+    // 扩展匹配函数：支持模糊匹配（查询词包含在话题中任意位置）
+    const fuzzyMatch = (topicWord: string): boolean => {
+      const topicLower = topicWord.toLowerCase();
+      
+      // 1. 精确包含：话题包含查询词或查询词包含话题
+      const exactMatch = queryWords.some(qw => topicLower.includes(qw) || qw.includes(topicLower))
+        || topicLower.includes(queryLower)
+        || queryLower.includes(topicLower);
+      if (exactMatch) return true;
+      
+      // 2. 任意查询词的部分字符匹配（处理缩写、简称）
+      // 例如查询 "英伟达" 匹配 "NVIDIA"
+      for (const qw of queryWords) {
+        // 提取查询词的每个字符（汉字）或每个单词（英文）
+        const chars = qw.match(/[\u4e00-\u9fa5]|[a-zA-Z]+/g) || [];
+        if (chars.length >= 2) {
+          // 至少2个字符/单词在话题中出现
+          const matchCount = chars.filter(c => topicLower.includes(c.toLowerCase())).length;
+          if (matchCount >= Math.min(2, chars.length)) {
+            return true;
+          }
+        }
+      }
+      
+      return false;
+    };
 
     for (const item of hotItems) {
-      const word = (item.note || item.word || '').toLowerCase();
+      const topicName = item.note || item.word || '';
       
-      // 检查关键词是否匹配热搜话题（任一查询词出现在话题中，或话题出现在查询中）
-      const isMatch = queryWords.some(qw => word.includes(qw) || qw.includes(word))
-        || word.includes(queryLower)
-        || queryLower.includes(word);
-
-      if (isMatch) {
-        const topicName = item.note || item.word;
+      // 使用扩展匹配函数
+      if (fuzzyMatch(topicName)) {
         const url = `https://s.weibo.com/weibo?q=${encodeURIComponent('#' + topicName + '#')}`;
 
         results.push({
@@ -569,13 +616,7 @@ export async function searchWeibo(query: string): Promise<SearchResult[]> {
       }
     }
 
-    // 如果没有匹配的热搜，返回所有热搜中的前几条作为参考（对于热点监控有价值）
-    if (results.length === 0) {
-      console.log(`Weibo hot search: no match for "${query}", returning top trends`);
-    } else {
-      console.log(`Weibo hot search: ${results.length} matches for "${query}"`);
-    }
-
+    console.log(`Weibo hot search: ${results.length} matches for "${query}"`);
     return results;
   } catch (error) {
     console.error('Weibo hot search error:', error instanceof Error ? error.message : error);
@@ -802,6 +843,7 @@ export async function searchWeixin(query: string): Promise<SearchResult[]> {
     const html = response.data;
     const $ = cheerio.load(html);
     const results: SearchResult[] = [];
+    const seenUrls = new Set<string>();
 
     console.log(`[微信搜索] 响应长度: ${html.length} 字符`);
     console.log(`[微信搜索] 页面标题: ${$('title').text() || '未知'}`);
@@ -835,20 +877,22 @@ export async function searchWeixin(query: string): Promise<SearchResult[]> {
             return;
           }
 
-          if (url.startsWith('/link?url=')) {
-            try {
-              const urlParams = new URLSearchParams(url.split('?')[1]);
-              const decodedUrl = decodeURIComponent(urlParams.get('url') || '');
-              if (decodedUrl && decodedUrl.startsWith('http')) {
-                url = decodedUrl;
-              }
-            } catch {
-              // 保持原 URL
-            }
+          url = extractSogouRedirectUrl(url);
+
+          if (seenUrls.has(url)) {
+            return;
           }
+          seenUrls.add(url);
 
           const snippet = $element.find('.txt-info, .txt-desc, .desc, p, .content').first().text().trim();
-          const authorName = $element.find('.account, .s-p, .info .name, .gzh-name').first().text().trim();
+          
+          let authorName = $element.find('.account, .s-p, .info .name, .gzh-name').first().text().trim();
+          authorName = authorName.replace(/document\.write\([^)]+\)/gi, '').trim();
+          authorName = authorName.replace(/\)\s*$/, '').trim();
+
+          if (authorName.length < 2) {
+            authorName = '';
+          }
           
           let timestamp: number | null = null;
           const timeHtml = $element.find('.s2, .s-p, .time').first().html() || '';
@@ -874,14 +918,19 @@ export async function searchWeixin(query: string): Promise<SearchResult[]> {
             return;
           }
 
-          results.push({
+          const result: SearchResult = {
             title,
             content: fullContent,
             url,
             source: 'weixin' as const,
-            author: authorName ? { name: authorName } : undefined,
             publishedAt: timestamp ? new Date(timestamp) : new Date()
-          });
+          };
+          
+          if (authorName) {
+            result.author = { name: authorName };
+          }
+
+          results.push(result);
         });
       }
     }

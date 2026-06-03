@@ -238,7 +238,7 @@ router.post('/search', async (req, res) => {
   }
 });
 
-// 删除热点
+// 删除单个热点
 router.delete('/:id', async (req, res) => {
   try {
     await prisma.hotspot.delete({
@@ -252,6 +252,31 @@ router.delete('/:id', async (req, res) => {
     }
     console.error('Error deleting hotspot:', error);
     res.status(500).json({ error: 'Failed to delete hotspot' });
+  }
+});
+
+// 批量删除热点
+router.delete('/batch', async (req, res) => {
+  try {
+    const { ids } = req.body;
+
+    if (!ids || !Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: 'ids array is required' });
+    }
+
+    const result = await prisma.hotspot.deleteMany({
+      where: {
+        id: { in: ids }
+      }
+    });
+
+    res.json({
+      message: `成功删除 ${result.count} 条热点数据`,
+      deletedCount: result.count
+    });
+  } catch (error) {
+    console.error('Error batch deleting hotspots:', error);
+    res.status(500).json({ error: 'Failed to batch delete hotspots' });
   }
 });
 

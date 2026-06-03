@@ -12,6 +12,9 @@ export function useToast() {
   const [toasts, setToasts] = useState<Toast[]>([]);
 
   const showToast = useCallback((message: string, type: ToastType = 'info', duration = 3000) => {
+    // 函数式更新：移除已存在的相同 toast，避免依赖 toasts 数组
+    setToasts(prev => prev.filter(t => !(t.message === message && t.type === type)));
+    
     const id = Math.random().toString(36).substring(2, 9);
     const toast: Toast = { id, message, type };
     

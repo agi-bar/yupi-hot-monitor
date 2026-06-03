@@ -187,8 +187,12 @@ export async function analyzeContent(content: string, keyword: string, preMatchR
       ]
     });
 
+    // MiniMax API 响应中 content 数组可能包含多个类型：
+    // - thinking: MiniMax 特有的思考过程
+    // - text: 实际的文本响应
+    // 需要找到 text 类型的内容
     const textContent = result.content.find(c => c.type === 'text');
-    const responseContent = textContent ? textContent.text : '';
+    const responseContent = textContent ? (textContent as any).text : '';
     
     // 尝试解析 JSON
     const jsonMatch = responseContent.match(/\{[\s\S]*\}/);
@@ -269,7 +273,7 @@ export async function validateAIConfiguration(): Promise<{ success: boolean; mes
     const model = process.env.ANTHROPIC_API_KEY ? 'claude-3-haiku-20240307' : 'MiniMax-M2.5';
     const result = await anthropic.messages.create({
       model,
-      max_tokens: 10,
+      max_tokens: 50, // 需要足够的 token 才能触发 text 类型响应
       messages: [{ role: 'user', content: 'test' }]
     });
     
