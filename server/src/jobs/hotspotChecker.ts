@@ -213,6 +213,7 @@ export async function runHotspotCheck(io: Server): Promise<void> {
           
           let existing = await prisma.hotspot.findFirst({
             where: {
+              isDeleted: false,  // 排除已删除的记录
               OR: [
                 { url: item.url, source: item.source },
                 { fingerprint: contentFingerprint }
@@ -224,6 +225,7 @@ export async function runHotspotCheck(io: Server): Promise<void> {
             const normalizedUrl = normalizeUrlForDeduplication(item.url);
             existing = await prisma.hotspot.findFirst({
               where: {
+                isDeleted: false,  // 排除已删除的记录
                 url: { startsWith: normalizedUrl },
                 source: item.source
               }

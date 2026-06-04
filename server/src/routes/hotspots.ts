@@ -25,7 +25,7 @@ router.get('/', async (req, res) => {
     const limitNum = parseInt(limit as string);
     const skip = (pageNum - 1) * limitNum;
 
-    const where: any = {};
+    const where: any = { isDeleted: false };  // 默认排除已删除的记录
     if (source) where.source = source;
     if (importance) where.importance = importance;
     if (keywordId) where.keywordId = keywordId;
@@ -238,7 +238,7 @@ router.post('/search', async (req, res) => {
   }
 });
 
-// 批量删除热点（必须在 /:id 之前定义）
+// 批量删除热点（软删除，必须在 /:id 之前定义）
 router.delete('/batch', async (req, res) => {
   try {
     const { ids } = req.body;
@@ -247,9 +247,13 @@ router.delete('/batch', async (req, res) => {
       return res.status(400).json({ error: 'ids array is required' });
     }
 
-    const result = await prisma.hotspot.deleteMany({
+    // 使用软删除：设置 isDeleted = true，而不是真正删除
+    const result = await prisma.hotspot.updateMany({
       where: {
         id: { in: ids }
+      },
+      data: {
+        isDeleted: true
       }
     });
 
@@ -263,18 +267,25 @@ router.delete('/batch', async (req, res) => {
   }
 });
 
-// 删除单个热点
+// 删除单个热点（软删除）
 router.delete('/:id', async (req, res) => {
   try {
-    await prisma.hotspot.delete({
+    const hotspot = await prisma.hotspot.findUnique({
       where: { id: req.params.id }
+    });
+
+    if (!hotspot) {
+      return res.status(404).json({ error: 'Hotspot not found' });
+    }
+
+    // 使用软删除
+    await prisma.hotspot.update({
+      where: { id: req.params.id },
+      data: { isDeleted: true }
     });
 
     res.status(204).send();
   } catch (error: any) {
-    if (error.code === 'P2025') {
-      return res.status(404).json({ error: 'Hotspot not found' });
-    }
     console.error('Error deleting hotspot:', error);
     res.status(500).json({ error: 'Failed to delete hotspot' });
   }

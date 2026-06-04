@@ -581,10 +581,9 @@ export async function searchWeibo(query: string): Promise<SearchResult[]> {
     const fuzzyMatch = (topicWord: string): boolean => {
       const topicLower = topicWord.toLowerCase();
       
-      // 1. 精确包含：话题包含查询词或查询词包含话题
-      const exactMatch = queryWords.some(qw => topicLower.includes(qw) || qw.includes(topicLower))
-        || topicLower.includes(queryLower)
-        || queryLower.includes(topicLower);
+      // 精确包含：话题包含查询词中的任意一个，或查询词包含话题
+      // queryWords 已经包含完整的 query（当无分隔符时），无需额外检查
+      const exactMatch = queryWords.some(qw => topicLower.includes(qw) || qw.includes(topicLower));
       if (exactMatch) return true;
       
       // 2. 任意查询词的部分字符匹配（处理缩写、简称）
@@ -623,11 +622,20 @@ export async function searchWeibo(query: string): Promise<SearchResult[]> {
     };
 
     for (const item of hotItems) {
-      const topicName = item.note || item.word || '';
+      // word 字段包含完整话题（如 "#NBA总决赛#"），note 是简化名称
+      const rawTopic = item.word || item.note || '';
+      // 清理话题名称：移除 # 符号和其他特殊字符
+      const topicName = rawTopic.replace(/#/g, '').trim();
+      
+      // 跳过空话题或纯数字话题
+      if (!topicName || /^\d+$/.test(topicName)) continue;
       
       // 使用扩展匹配函数
       if (fuzzyMatch(topicName)) {
-        const url = `https://s.weibo.com/weibo?q=${encodeURIComponent('#' + topicName + '#')}`;
+        // 使用原始话题创建热搜链接（微博需要 # 符号）
+        const url = rawTopic.includes('#') 
+          ? `https://s.weibo.com/weibo?q=${encodeURIComponent(rawTopic)}`
+          : `https://s.weibo.com/weibo?q=${encodeURIComponent('#' + topicName + '#')}`;
 
         results.push({
           title: `🔥 微博热搜: ${topicName}`,
@@ -778,62 +786,123 @@ export async function searchToutiao(query: string): Promise<SearchResult[]> {
 }
 
 // ============================================================
-// 抖音搜索（通过搜狗搜索，兼容性好）
+// 抖音热搜搜索（使用抖音公开 API）
 // ============================================================
+interface DouyinHotItem {
+  word: string;
+  hot_value: number;
+  label?: number;
+  video_count?: number;
+}
+
+interface DouyinHotResponse {
+  status_code: number;
+  data?: {
+    word_list?: DouyinHotItem[];
+  };
+}
+
 export async function searchDouyin(query: string): Promise<SearchResult[]> {
   await douyinLimiter.wait();
 
   try {
-    // 使用搜狗搜索指定 site:douyin.com，更稳定
-    const response = await axios.get('https://www.sogou.com/web', {
-      params: {
-        query: `site:douyin.com ${query}`,
-        ie: 'utf-8'
-      },
-      headers: {
-        'User-Agent': getRandomUserAgent(),
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-        'Referer': 'https://www.sogou.com/'
-      },
-      timeout: 15000,
-      maxRedirects: 5
-    });
-
-    const $ = cheerio.load(response.data);
-    const results: SearchResult[] = [];
-    const seenUrls = new Set<string>();
-
-    $('.vrwrap, .rb').each((_, element) => {
-      const titleElement = $(element).find('h3 a, .vr-title a').first();
-      const title = titleElement.text().trim();
-      let url = titleElement.attr('href') || '';
-
-      if (!title || title.length < 3) return;
-
-      // 提取搜狗跳转链接中的真实URL
-      if (url.includes('/link?url=')) {
-        url = extractSogouRedirectUrl(url);
+    // 使用抖音热搜公开 API
+    const response = await axios.get<DouyinHotResponse>(
+      'https://www.douyin.com/aweme/v1/web/hot/search/list/',
+      {
+        params: {
+          device_platform: 'webapp',
+          aid: 6383,
+          channel: 'channel_pc_web',
+          detail_list: 1,
+          update_version_code: 170400
+        },
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15',
+          'Accept': 'application/json, text/plain, */*',
+          'Accept-Language': 'zh-CN,zh;q=0.9',
+          'Referer': 'https://www.douyin.com/'
+        },
+        timeout: 15000
       }
+    );
 
-      if (!url || seenUrls.has(url) || !url.includes('douyin.com')) return;
-      seenUrls.add(url);
+    if (response.data.status_code !== 0 || !response.data.data?.word_list) {
+      console.log('Douyin hot search: no data or API error');
+      return [];
+    }
 
-      const snippet = $(element).find('.space-txt, .str-text-info, p').first().text().trim();
+    const hotItems: DouyinHotItem[] = response.data.data.word_list;
+    const results: SearchResult[] = [];
+    const queryLower = query.toLowerCase();
+    // 支持多种分隔符拆分查询词
+    const queryWords = queryLower.split(/[\s\-_\/\\·#,，、]+/).filter(w => w.length >= 2);
+    
+    // 扩展匹配函数：与微博热搜相同的匹配逻辑
+    const fuzzyMatch = (topicWord: string): boolean => {
+      const topicLower = topicWord.toLowerCase();
+      
+      // 精确包含：话题包含查询词中的任意一个，或查询词包含话题
+      // queryWords 已经包含完整的 query（当无分隔符时），无需额外检查
+      const exactMatch = queryWords.some(qw => topicLower.includes(qw) || qw.includes(topicLower));
+      if (exactMatch) return true;
+      
+      // 2. 英文词部分匹配
+      for (const qw of queryWords) {
+        const isEnglishWord = /^[a-zA-Z]+$/.test(qw);
+        
+        if (isEnglishWord) {
+          // 英文词：单词边界匹配
+          const wordBoundaryMatch = new RegExp(`\\b${qw}\\b`, 'i').test(topicLower);
+          if (wordBoundaryMatch) return true;
+          
+          // 短词词根匹配
+          if (qw.length <= 3) {
+            const rootMatch = topicLower.includes(qw.toLowerCase());
+            if (rootMatch && topicLower.length < qw.length * 10) {
+              return true;
+            }
+          }
+        } else {
+          // 中文词：字符匹配
+          const chars = qw.match(/[\u4e00-\u9fa5]/g) || [];
+          if (chars.length >= 2) {
+            const matchCount = chars.filter(c => topicLower.includes(c)).length;
+            if (matchCount >= Math.min(2, chars.length)) {
+              return true;
+            }
+          }
+        }
+      }
+      
+      return false;
+    };
 
-      results.push({
-        title,
-        content: snippet || title,
-        url,
-        source: 'douyin' as const,
-        publishedAt: new Date()
-      });
-    });
+    for (const item of hotItems) {
+      const topicName = item.word || '';
+      
+      // 跳过空话题
+      if (!topicName || topicName.length < 2) continue;
+      
+      // 使用扩展匹配函数
+      if (fuzzyMatch(topicName)) {
+        const url = `https://www.douyin.com/search/${encodeURIComponent(topicName)}`;
 
-    console.log(`Douyin search for "${query}": found ${results.length} results`);
-    return results.slice(0, 20);
+        results.push({
+          title: `🎵 抖音热搜: ${topicName}`,
+          content: `抖音热搜话题「${topicName}」，热度 ${item.hot_value?.toLocaleString() || '未知'}`,
+          url,
+          source: 'douyin' as const,
+          viewCount: item.hot_value || 0,
+          publishedAt: new Date()
+        });
+      }
+    }
+
+    console.log(`Douyin hot search: ${results.length} matches for "${query}"`);
+    return results;
   } catch (error) {
-    console.error('Douyin search error:', error instanceof Error ? error.message : error);
+    console.error('Douyin hot search error:', error instanceof Error ? error.message : error);
     return [];
   }
 }
