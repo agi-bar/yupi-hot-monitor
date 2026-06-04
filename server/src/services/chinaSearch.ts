@@ -1089,6 +1089,32 @@ export async function searchBaidu(query: string): Promise<SearchResult[]> {
         return;
       }
 
+      if (url.startsWith('http://www.baidu.com/link?') || url.startsWith('https://www.baidu.com/link?')) {
+        try {
+          const parsed = new URL(url);
+          let linkParam = parsed.searchParams.get('url');
+          if (!linkParam) {
+            linkParam = parsed.searchParams.get('wd');
+          }
+          if (linkParam) {
+            let decodedUrl = decodeURIComponent(linkParam);
+            try {
+              const base64Padded = decodedUrl.padEnd(decodedUrl.length + (4 - decodedUrl.length % 4) % 4, '=');
+              const buffer = Buffer.from(base64Padded, 'base64');
+              const base64Decoded = buffer.toString('utf-8');
+              if (base64Decoded.startsWith('http')) {
+                decodedUrl = base64Decoded;
+              }
+            } catch {}
+            if (decodedUrl.startsWith('http')) {
+              url = decodedUrl;
+            }
+          }
+        } catch {
+          // 解析失败，使用原始URL
+        }
+      }
+
       const snippet = $(element).find('.c-abstract, .content-right_8Zs40, .t span').first().text().trim();
       const fullContent = snippet || title;
       const ageCheck = checkContentAge(fullContent, url);

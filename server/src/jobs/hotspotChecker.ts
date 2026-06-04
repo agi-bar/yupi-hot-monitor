@@ -344,7 +344,7 @@ export async function runHotspotCheck(io: Server): Promise<void> {
               keywordId: keyword.id
             },
             include: {
-              keyword: true
+              Keyword: true
             }
           });
 

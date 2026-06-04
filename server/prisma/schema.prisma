@@ -8,7 +8,7 @@ datasource db {
 }
 
 model Hotspot {
-  id               String    @id
+  id               String    @id @default(cuid())
   title            String
   content          String
   url              String
@@ -55,7 +55,7 @@ model Keyword {
 }
 
 model Notification {
-  id        String   @id
+  id        String   @id @default(cuid())
   type      String
   title     String
   content   String

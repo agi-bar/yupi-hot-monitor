@@ -10,11 +10,18 @@ router.get('/', async (req, res) => {
       orderBy: { createdAt: 'desc' },
       include: {
         _count: {
-          select: { hotspots: true }
+          select: {
+            Hotspot: true
+          }
         }
       }
     });
-    res.json(keywords);
+    // Prisma 6.x 返回 _count.Hotspot，映射为 _count.hotspots
+    const mappedKeywords = keywords.map(k => ({
+      ...k,
+      _count: { hotspots: k._count.Hotspot }
+    }));
+    res.json(mappedKeywords);
   } catch (error) {
     console.error('Error fetching keywords:', error);
     res.status(500).json({ error: 'Failed to fetch keywords' });
@@ -27,7 +34,7 @@ router.get('/:id', async (req, res) => {
     const keyword = await prisma.keyword.findUnique({
       where: { id: req.params.id },
       include: {
-        hotspots: {
+        Hotspot: {
           orderBy: { createdAt: 'desc' },
           take: 20
         }
@@ -38,7 +45,14 @@ router.get('/:id', async (req, res) => {
       return res.status(404).json({ error: 'Keyword not found' });
     }
 
-    res.json(keyword);
+    // Prisma 6.x 返回 Hotspot，映射为 hotspots 并删除原字段
+    const { Hotspot, ...rest } = keyword;
+    const mappedKeyword = {
+      ...rest,
+      hotspots: Hotspot
+    };
+
+    res.json(mappedKeyword);
   } catch (error) {
     console.error('Error fetching keyword:', error);
     res.status(500).json({ error: 'Failed to fetch keyword' });

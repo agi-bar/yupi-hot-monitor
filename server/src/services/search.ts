@@ -79,6 +79,31 @@ export async function searchBing(query: string): Promise<SearchResult[]> {
       const fullText = title + ' ' + snippet;
 
       if (title && url && url.startsWith('http')) {
+        let resolvedUrl = url;
+        
+        if (url.includes('bing.com/ck/a')) {
+          try {
+            const urlObj = new URL(url);
+            const uParam = urlObj.searchParams.get('u');
+            if (uParam) {
+              let decodedUrl = decodeURIComponent(uParam);
+              try {
+                const base64Padded = decodedUrl.padEnd(decodedUrl.length + (4 - decodedUrl.length % 4) % 4, '=');
+                const buffer = Buffer.from(base64Padded, 'base64');
+                const base64Decoded = buffer.toString('utf-8');
+                if (base64Decoded.startsWith('http')) {
+                  decodedUrl = base64Decoded;
+                }
+              } catch {}
+              if (decodedUrl.startsWith('http')) {
+                resolvedUrl = decodedUrl;
+              }
+            }
+          } catch {
+            // 解析失败，使用原始URL
+          }
+        }
+        
         let publishedAt = new Date();
         let hasValidDate = false;
         
@@ -115,7 +140,7 @@ export async function searchBing(query: string): Promise<SearchResult[]> {
         results.push({
           title,
           content: snippet,
-          url,
+          url: resolvedUrl,
           source: 'bing',
           publishedAt
         });

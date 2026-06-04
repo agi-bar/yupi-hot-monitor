@@ -1,10 +1,13 @@
 import Anthropic from '@anthropic-ai/sdk';
 import type { AIAnalysis } from '../types.js';
 
-const anthropic = new Anthropic({
-  baseURL: process.env.ANTHROPIC_BASE_URL || 'https://api.minimaxi.com/anthropic',
-  apiKey: process.env.ANTHROPIC_API_KEY ?? process.env.MINIMAX_API_KEY ?? ''
-});
+function getAnthropic(): Anthropic {
+  const apiKey = process.env.ANTHROPIC_API_KEY ?? process.env.MINIMAX_API_KEY ?? '';
+  return new Anthropic({
+    baseURL: process.env.ANTHROPIC_BASE_URL || 'https://api.minimaxi.com/anthropic',
+    apiKey
+  });
+}
 
 // ========== Query Expansion（查询扩展） ==========
 
@@ -32,7 +35,7 @@ export async function expandKeyword(keyword: string): Promise<string[]> {
 
   try {
     const model = process.env.ANTHROPIC_API_KEY ? 'claude-3-haiku-20240307' : 'MiniMax-M2.5';
-    const result = await anthropic.messages.create({
+    const result = await getAnthropic().messages.create({
       model,
       max_tokens: 300,
       temperature: 0.2,
@@ -180,7 +183,7 @@ export async function analyzeContent(content: string, keyword: string, preMatchR
     const prompt = buildAnalysisPrompt(keyword, matchResult);
     const model = process.env.ANTHROPIC_API_KEY ? 'claude-3-haiku-20240307' : 'MiniMax-M2.5';
 
-    const result = await anthropic.messages.create({
+    const result = await getAnthropic().messages.create({
       model,
       max_tokens: 500,
       temperature: 0.2,
@@ -194,11 +197,14 @@ export async function analyzeContent(content: string, keyword: string, preMatchR
     });
 
     // MiniMax API 响应中 content 数组可能包含多个类型：
-    // - thinking: MiniMax 特有的思考过程
-    // - text: 实际的文本响应
-    // 需要找到 text 类型的内容
-    const textContent = result.content.find(c => c.type === 'text');
-    const responseContent = textContent ? (textContent as any).text : '';
+    // - thinking: MiniMax 特有的思考过程（字段名为 thinking）
+    // - text: 实际的文本响应（字段名为 text）
+    // 需要优先查找 text 类型的内容，如果没有再查找 thinking 类型
+    const textItem = result.content.find(c => c.type === 'text');
+    const thinkingItem = result.content.find(c => c.type === 'thinking');
+    const responseContent = textItem 
+      ? (textItem as any).text || '' 
+      : (thinkingItem ? (thinkingItem as any).thinking || '' : '');
     
     // 尝试解析 JSON
     const jsonMatch = responseContent.match(/\{[\s\S]*\}/);
@@ -278,17 +284,17 @@ export async function validateAIConfiguration(): Promise<{ success: boolean; mes
   
   try {
     const model = process.env.ANTHROPIC_API_KEY ? 'claude-3-haiku-20240307' : 'MiniMax-M2.5';
-    const result = await anthropic.messages.create({
+    const result = await getAnthropic().messages.create({
       model,
       max_tokens: 50, // 需要足够的 token 才能触发 text 类型响应
       messages: [{ role: 'user', content: 'test' }]
     });
     
-    const textContent = result.content.find(c => c.type === 'text');
-    if (textContent) {
+    const contentItem = result.content.find(c => c.type === 'text' || c.type === 'thinking');
+    if (contentItem) {
       return { success: true, message: 'AI API 连接验证成功' };
     } else {
-      return { success: false, message: 'AI API 响应格式异常，未找到 text 类型内容' };
+      return { success: false, message: 'AI API 响应格式异常，未找到 text 或 thinking 类型内容' };
     }
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);

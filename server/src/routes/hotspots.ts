@@ -91,7 +91,7 @@ router.get('/', async (req, res) => {
         orderBy,
         ...(needsMemorySort ? {} : { skip, take: limitNum }),
         include: {
-          keyword: {
+          Keyword: {
             select: { id: true, text: true, category: true }
           }
         }
@@ -99,12 +99,21 @@ router.get('/', async (req, res) => {
       prisma.hotspot.count({ where })
     ]);
 
+    // Prisma 6.x 返回 Keyword，映射为 keyword 并删除原字段
+    const mappedHotspots = rawHotspots.map(h => {
+      const { Keyword, ...rest } = h;
+      return {
+        ...rest,
+        keyword: Keyword
+      };
+    });
+
     let hotspots;
     if (needsMemorySort) {
-      const sorted = sortHotspots(rawHotspots, sort, order as 'asc' | 'desc');
+      const sorted = sortHotspots(mappedHotspots, sort, order as 'asc' | 'desc');
       hotspots = sorted.slice(skip, skip + limitNum);
     } else {
-      hotspots = rawHotspots;
+      hotspots = mappedHotspots;
     }
 
     res.json({
