@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 
 export type ToastType = 'success' | 'error' | 'info' | 'warning';
 
@@ -10,6 +10,7 @@ export interface Toast {
 
 export function useToast() {
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const timeoutRefs = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
   const showToast = useCallback((message: string, type: ToastType = 'info', duration = 3000) => {
     // 函数式更新：移除已存在的相同 toast，避免依赖 toasts 数组
@@ -20,14 +21,29 @@ export function useToast() {
     
     setToasts(prev => [...prev, toast]);
     
-    setTimeout(() => {
+    // 清理之前的 timeout
+    const existingTimeout = timeoutRefs.current.get(id);
+    if (existingTimeout) {
+      clearTimeout(existingTimeout);
+    }
+    
+    const timeoutId = setTimeout(() => {
       setToasts(prev => prev.filter(t => t.id !== id));
+      timeoutRefs.current.delete(id);
     }, duration);
+    
+    timeoutRefs.current.set(id, timeoutId);
 
     return id;
   }, []);
 
   const removeToast = useCallback((id: string) => {
+    // 清理该 toast 的 timeout
+    const timeoutId = timeoutRefs.current.get(id);
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+      timeoutRefs.current.delete(id);
+    }
     setToasts(prev => prev.filter(t => t.id !== id));
   }, []);
 

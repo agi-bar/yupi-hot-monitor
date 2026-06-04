@@ -6,7 +6,7 @@ import { cn } from '../lib/utils';
 interface ConfirmDialogProps {
   isOpen: boolean;
   onClose: () => void;
-  onConfirm: () => Promise<void>;
+  onConfirm?: () => Promise<void>;
   title: string;
   message: string;
   confirmText?: string;
@@ -27,14 +27,16 @@ export default function ConfirmDialog({
   const [isLoading, setIsLoading] = useState(false);
 
   const handleConfirm = async () => {
-    if (isLoading) return;
+    if (isLoading || !onConfirm) return;
     
     setIsLoading(true);
     try {
       await onConfirm();
+      onClose();
+    } catch {
+      // 操作失败，保持对话框打开，让用户可以重试
     } finally {
       setIsLoading(false);
-      onClose();
     }
   };
 
@@ -46,7 +48,7 @@ export default function ConfirmDialog({
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-[var(--overlay-bg)] backdrop-blur-sm z-50 flex items-center justify-center px-4"
+            className="fixed inset-0 bg-[var(--overlay-bg)] backdrop-blur-sm z-60 flex items-center justify-center px-4"
             onClick={onClose}
           />
           <motion.div
@@ -54,7 +56,7 @@ export default function ConfirmDialog({
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: 10 }}
             transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-            className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-[var(--bg-card)] rounded-2xl border border-[var(--border-default)] shadow-2xl z-50 w-full max-w-md overflow-hidden"
+            className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-[var(--bg-card)] rounded-2xl border border-[var(--border-default)] shadow-2xl z-60 w-full max-w-md overflow-hidden"
           >
             <div className="p-6">
               <div className="flex items-center gap-3 mb-4">

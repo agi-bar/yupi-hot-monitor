@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   ArrowUpDown, Filter, X, Clock, Flame, TrendingUp, Target,
@@ -171,19 +171,19 @@ export default function FilterSortBar({ filters, onChange, keywords, stats }: Fi
     onChange({ ...defaultFilterState });
   };
 
-  const keywordOptions = [
+  const keywordOptions = useMemo(() => [
     { value: '', label: '全部关键词' },
     ...keywords.filter(k => k.isActive).map(k => ({ 
       value: k.id, 
       label: k.text, 
       count: k._count?.hotspots || 0 
     })),
-  ];
+  ], [keywords]);
 
-  const sourceOptions = SOURCE_CONFIG.map(option => ({
+  const sourceOptions = useMemo(() => SOURCE_CONFIG.map(option => ({
     ...option,
     count: option.value === '' ? stats?.total || 0 : stats?.bySource?.[option.value] || 0
-  }));
+  })), [stats?.total, stats?.bySource]);
 
   return (
     <div className="space-y-3">

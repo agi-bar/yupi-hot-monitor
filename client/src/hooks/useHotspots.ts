@@ -16,6 +16,7 @@ export function useHotspots(pageSize: number, filters: Record<string, string | n
   const [totalPages, setTotalPages] = useState(1);
   
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const manualCheckTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const buildFilterParams = useCallback(() => {
     const params: Record<string, string | number> = {
@@ -39,7 +40,7 @@ export function useHotspots(pageSize: number, filters: Record<string, string | n
         const filterParams = buildFilterParams();
         const [keywordsData, hotspotsData, statsData, notifData] = await Promise.all([
           keywordsApi.getAll(),
-          hotspotsApi.getAll(filterParams as any),
+          hotspotsApi.getAll(filterParams),
           hotspotsApi.getStats(),
           notificationsApi.getAll({ limit: 20 })
         ]);
@@ -68,6 +69,9 @@ export function useHotspots(pageSize: number, filters: Record<string, string | n
     return () => {
       if (debounceRef.current) {
         clearTimeout(debounceRef.current);
+      }
+      if (manualCheckTimeoutRef.current) {
+        clearTimeout(manualCheckTimeoutRef.current);
       }
     };
   }, [loadData]);
@@ -98,10 +102,15 @@ export function useHotspots(pageSize: number, filters: Record<string, string | n
   }, [currentPage, totalPages]);
 
   const handleManualCheck = useCallback(async () => {
+    // 清理之前的 timeout
+    if (manualCheckTimeoutRef.current) {
+      clearTimeout(manualCheckTimeoutRef.current);
+    }
+    
     setIsChecking(true);
     try {
       await triggerHotspotCheck();
-      setTimeout(loadData, 5000);
+      manualCheckTimeoutRef.current = setTimeout(loadData, 5000);
     } catch (error) {
       console.error('Manual check failed:', error);
     } finally {

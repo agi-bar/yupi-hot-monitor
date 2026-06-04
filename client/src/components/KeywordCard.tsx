@@ -13,7 +13,6 @@ interface KeywordCardProps {
 export default function KeywordCard({ keyword, index, onToggle, onDelete }: KeywordCardProps) {
   return (
     <motion.div
-      key={keyword.id}
       layout
       initial={{ opacity: 0, scale: 0.9 }}
       animate={{ opacity: 1, scale: 1 }}

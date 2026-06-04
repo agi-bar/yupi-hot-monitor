@@ -60,6 +60,7 @@ function App() {
   } | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const keywordsRef = useRef<Keyword[]>([]);
+  const manualCheckTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const loadData = useCallback(async () => {
     setIsLoading(true);
@@ -101,6 +102,7 @@ function App() {
   }, [dashboardFilters, currentPage, pageSize, error]);
 
   useEffect(() => {
+    // dashboardFilters 改变时重置页码
     setCurrentPage(1);
   }, [dashboardFilters]);
 
@@ -112,6 +114,9 @@ function App() {
     }
     
     return () => {
+      // 先更新 ref，再执行清理逻辑
+      keywordsRef.current = keywords;
+      
       const prevKeywords = keywordsRef.current;
       const prevActive = prevKeywords.filter(k => k.isActive).map(k => k.text);
       const toUnsubscribe = prevActive.filter(k => !activeKeywords.includes(k));
@@ -119,14 +124,15 @@ function App() {
       if (toUnsubscribe.length > 0) {
         unsubscribeFromKeywords(toUnsubscribe);
       }
-      
-      keywordsRef.current = keywords;
     };
   }, [keywords]);
 
   const handlePageSizeChange = (newSize: number) => {
-    setPageSize(newSize);
-    setCurrentPage(1);
+    const validSizes = [5, 10, 20, 50, 100];
+    if (validSizes.includes(newSize)) {
+      setPageSize(newSize);
+      setCurrentPage(1);
+    }
   };
 
   useEffect(() => {
@@ -159,6 +165,10 @@ function App() {
     return () => {
       unsubHotspot();
       unsubNotif();
+      // 清理待执行的 timeout
+      if (manualCheckTimeoutRef.current) {
+        clearTimeout(manualCheckTimeoutRef.current);
+      }
     };
   }, [pageSize, showToast]);
 
@@ -214,11 +224,16 @@ function App() {
   };
 
   const handleManualCheck = async () => {
+    // 清理之前的 timeout
+    if (manualCheckTimeoutRef.current) {
+      clearTimeout(manualCheckTimeoutRef.current);
+    }
+    
     setIsChecking(true);
     try {
       await triggerHotspotCheck();
       success('热点检查已触发');
-      setTimeout(loadData, 5000);
+      manualCheckTimeoutRef.current = setTimeout(loadData, 5000);
     } catch {
       error('触发失败');
     } finally {
@@ -324,8 +339,10 @@ function App() {
       await notificationsApi.markAllAsRead();
       setUnreadCount(0);
       setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
+      success('所有通知已标记为已读');
     } catch (err) {
       console.error('Failed to mark as read:', err);
+      error('操作失败，请稍后重试');
     }
   };
 
@@ -336,21 +353,9 @@ function App() {
       else next.add(id);
       return next;
     });
-    setExpandedContents(prev => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
   };
 
   const toggleContent = (id: string) => {
-    setExpandedReasons(prev => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
     setExpandedContents(prev => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);

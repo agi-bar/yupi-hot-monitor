@@ -49,6 +49,7 @@ function useDebounce<T extends (...args: any[]) => any>(callback: T, delay: numb
     timeoutRef.current = setTimeout(() => {
       callbackRef.current(...args);
     }, delay);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }) as T, [delay]);
 }
 

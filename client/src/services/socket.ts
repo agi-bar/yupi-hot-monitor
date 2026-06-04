@@ -1,6 +1,7 @@
 import { io, Socket } from 'socket.io-client';
 
 let socket: Socket | null = null;
+let connectionListeners: ((connected: boolean) => void)[] = [];
 
 export function getSocket(): Socket {
   if (!socket) {
@@ -20,18 +21,38 @@ export function getSocket(): Socket {
 
     socket.on('connect', () => {
       console.log('🔌 Socket connected:', socket?.id);
+      connectionListeners.forEach(listener => listener(true));
     });
 
     socket.on('disconnect', () => {
       console.log('🔌 Socket disconnected');
+      connectionListeners.forEach(listener => listener(false));
     });
 
     socket.on('connect_error', (error) => {
       console.error('🔌 Socket connection error:', error);
+      connectionListeners.forEach(listener => listener(false));
     });
   }
 
   return socket;
+}
+
+// 获取连接状态
+export function isConnected(): boolean {
+  return socket?.connected ?? false;
+}
+
+// 监听连接状态变化
+export function onConnectionChange(callback: (connected: boolean) => void): () => void {
+  connectionListeners.push(callback);
+  // 立即通知当前连接状态
+  if (socket?.connected) {
+    callback(true);
+  }
+  return () => {
+    connectionListeners = connectionListeners.filter(l => l !== callback);
+  };
 }
 
 export function subscribeToKeywords(keywords: string[]): void {
@@ -78,6 +99,15 @@ export function onNotification(callback: (notification: NotificationEvent) => vo
 export function disconnectSocket(): void {
   if (socket) {
     socket.disconnect();
+    // 清空所有连接状态监听器，防止内存泄漏
+    connectionListeners = [];
     socket = null;
   }
 }
+
+// 重置连接状态监听器（用于完全重新初始化 socket）
+function resetConnectionListeners(): void {
+  connectionListeners = [];
+}
+
+export { resetConnectionListeners };
