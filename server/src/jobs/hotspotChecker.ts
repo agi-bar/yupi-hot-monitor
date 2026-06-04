@@ -287,8 +287,9 @@ export async function runHotspotCheck(io: Server): Promise<void> {
             continue;
           }
 
-          // 额外规则：关键词未被提及且相关性不足 55（从 65 降低）→ 过滤
-          if (!analysis.keywordMentioned && analysis.relevance < 55) {
+          // 放宽规则：关键词未被提及但相关性 >= 40 时也保留（降级模式可能无法检测到关键词）
+          // 只有当相关性 < 40 时才过滤（无论关键词是否提及）
+          if (!analysis.keywordMentioned && analysis.relevance < 40) {
             filterStats.keywordMentioned++;
             totalFiltered++;
             continue;

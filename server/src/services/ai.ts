@@ -259,12 +259,13 @@ export async function analyzeContent(content: string, keyword: string, preMatchR
       console.error('  Error message:', error.message);
       console.error('  Stack trace:', error.stack);
     }
+    // AI 分析失败时不收录该热点
     return {
-      isReal: true,
-      relevance: matchResult.matched ? 55 : 40,
-      relevanceReason: 'AI 分析失败，使用默认分数',
-      keywordMentioned: matchResult.matched,
-      importance: 'medium',
+      isReal: false,  // 标记为非真实，过滤掉
+      relevance: 0,
+      relevanceReason: 'AI 分析失败，跳过收录',
+      keywordMentioned: false,
+      importance: 'low',
       summary: content.slice(0, 50) + '...'
     };
   }

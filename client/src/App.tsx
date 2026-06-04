@@ -271,9 +271,14 @@ function App() {
       success(`成功删除 ${result.deletedCount} 条热点数据`);
 
       setSelectedHotspots(new Set());
+      // 等待数据刷新完成后再关闭对话框
       await loadData();
+      
+      // 返回 Promise，确保对话框在所有操作完成后才关闭
+      return Promise.resolve();
     } catch {
       error('删除操作失败');
+      throw new Error('删除失败'); // 抛出错误阻止关闭
     } finally {
       setIsDeleting(false);
     }
@@ -289,8 +294,10 @@ function App() {
           await hotspotsApi.delete(id);
           success('热点已删除');
           await loadData();
+          return Promise.resolve();
         } catch {
           error('删除失败');
+          throw new Error('删除失败');
         }
       }
     });
@@ -307,8 +314,10 @@ function App() {
           await notificationsApi.delete(id);
           setNotifications(prev => prev.filter(n => n.id !== id));
           success('通知已删除');
+          return Promise.resolve();
         } catch {
           error('删除失败');
+          throw new Error('删除失败');
         }
       }
     });
@@ -326,8 +335,10 @@ function App() {
           setNotifications([]);
           setUnreadCount(0);
           success('所有通知已清空');
+          return Promise.resolve();
         } catch {
           error('清空失败');
+          throw new Error('清空失败');
         }
       }
     });

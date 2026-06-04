@@ -32,6 +32,7 @@ export default function ConfirmDialog({
     setIsLoading(true);
     try {
       await onConfirm();
+      // await 确保 onConfirm 的 Promise 完成后再关闭
       onClose();
     } catch {
       // 操作失败，保持对话框打开，让用户可以重试

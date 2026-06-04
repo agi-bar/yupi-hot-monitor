@@ -127,6 +127,7 @@ router.get('/stats', async (req, res) => {
   try {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
+    const notDeleted = { isDeleted: false };  // 统一使用 isDeleted: false 条件
 
     const [
       totalHotspots,
@@ -134,16 +135,17 @@ router.get('/stats', async (req, res) => {
       urgentHotspots,
       sourceStats
     ] = await Promise.all([
-      prisma.hotspot.count(),
+      prisma.hotspot.count({ where: notDeleted }),
       prisma.hotspot.count({
-        where: { createdAt: { gte: today } }
+        where: { ...notDeleted, createdAt: { gte: today } }
       }),
       prisma.hotspot.count({
-        where: { importance: 'urgent' }
+        where: { ...notDeleted, importance: 'urgent' }
       }),
       prisma.hotspot.groupBy({
         by: ['source'],
-        _count: { source: true }
+        _count: { source: true },
+        where: notDeleted
       })
     ]);
 
