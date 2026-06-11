@@ -25,13 +25,13 @@ model Hotspot {
   title           String
   content         String
   url             String
-  source          String    // twitter, bing, google
+  source          String    // twitter, bing, google, sogou, bilibili, weibo, hackernews, duckduckgo
   sourceId        String?   // 原始推文ID等
   isReal          Boolean   @default(true)
   relevance       Int       @default(0)
   relevanceReason String?   // AI 分析相关性的理由
   keywordMentioned Boolean?  // 内容中是否直接提及了关键词
-  importance      String    @default("low")
+  importance      String    @default("low") // low, medium, high, urgent
   summary         String?
   viewCount       Int?
   likeCount       Int?
@@ -51,6 +51,9 @@ model Hotspot {
   keyword         Keyword?  @relation(fields: [keywordId], references: [id], onDelete: SetNull)
 
   @@unique([url, source])
+  @@index([importance])
+  @@index([createdAt])
+  @@index([keywordId])
 }
 
 model Notification {
@@ -61,6 +64,9 @@ model Notification {
   isRead    Boolean  @default(false)
   hotspotId String?
   createdAt DateTime @default(now())
+
+  @@index([isRead, createdAt])
+  @@index([createdAt])
 }
 
 model Setting {

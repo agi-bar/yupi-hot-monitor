@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Flame, Search, Plus, Bell, Trash2, 
@@ -18,23 +18,25 @@ import { Spotlight } from './components/ui/spotlight';
 import { BackgroundBeams } from './components/ui/background-beams';
 import { Meteors } from './components/ui/meteors';
 import FilterSortBar, { defaultFilterState, type FilterState } from './components/FilterSortBar';
-import { sortHotspots } from './utils/sortHotspots';
+import { sortHotspots, calcHotScoreRaw, normalizeHotScore } from './utils/sortHotspots';
 import { relativeTime, formatDateTime } from './utils/relativeTime';
 // TextGenerateEffect available for future use
 
-/** 计算热度综合指标（归一化 0-100） */
+/** 计算热度综合指标（归一化 0-100，与后端 sortHotspots.ts 一致） */
 function calcHeatScore(h: Hotspot): number {
-  const likes = h.likeCount ?? 0;
-  const retweets = h.retweetCount ?? 0;
-  const replies = h.replyCount ?? 0;
-  const comments = h.commentCount ?? 0;
-  const quotes = h.quoteCount ?? 0;
-  const views = h.viewCount ?? 0;
-  // 加权公式：转发最重、其次点赞、然后评论/回复
-  const raw = likes * 2 + retweets * 3 + replies * 1.5 + comments * 1.5 + quotes * 2 + views / 100;
-  // log 压缩到 0-100
-  if (raw <= 0) return 0;
-  return Math.min(100, Math.round(Math.log10(raw + 1) * 25));
+  const raw = calcHotScoreRaw({
+    likeCount: h.likeCount,
+    retweetCount: h.retweetCount,
+    viewCount: h.viewCount,
+    replyCount: h.replyCount,
+    commentCount: h.commentCount,
+    quoteCount: h.quoteCount,
+    importance: h.importance,
+    relevance: h.relevance,
+    publishedAt: h.publishedAt,
+    createdAt: h.createdAt
+  });
+  return normalizeHotScore(raw);
 }
 
 function getHeatLevel(score: number): { label: string; color: string } {
@@ -58,7 +60,8 @@ function App() {
   const [isChecking, setIsChecking] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
   const [activeTab, setActiveTab] = useState<'dashboard' | 'keywords' | 'search'>('dashboard');
-  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  const [toasts, setToasts] = useState<Array<{ id: number; message: string; type: 'success' | 'error' }>>([]);
+  const toastIdRef = useRef(0);
   const [dashboardFilters, setDashboardFilters] = useState<FilterState>({ ...defaultFilterState });
   const [searchFilters, setSearchFilters] = useState<FilterState>({ ...defaultFilterState });
   const [currentPage, setCurrentPage] = useState(1);
@@ -139,8 +142,11 @@ function App() {
   }, [loadData]);
 
   const showToast = (message: string, type: 'success' | 'error') => {
-    setToast({ message, type });
-    setTimeout(() => setToast(null), 3000);
+    const id = ++toastIdRef.current;
+    setToasts(prev => [...prev, { id, message, type }]);
+    setTimeout(() => {
+      setToasts(prev => prev.filter(t => t.id !== id));
+    }, 3000);
   };
 
   // 添加关键词
@@ -333,25 +339,28 @@ function App() {
       <div className="fixed top-0 right-0 w-[600px] h-[600px] bg-blue-500/5 rounded-full blur-3xl pointer-events-none" />
       <div className="fixed bottom-0 left-0 w-[400px] h-[400px] bg-cyan-500/5 rounded-full blur-3xl pointer-events-none" />
 
-      {/* Toast */}
-      <AnimatePresence>
-        {toast && (
-          <motion.div
-            initial={{ opacity: 0, y: -20, x: '-50%' }}
-            animate={{ opacity: 1, y: 0, x: '-50%' }}
-            exit={{ opacity: 0, y: -20 }}
-            className={cn(
-              "fixed top-6 left-1/2 z-50 px-5 py-3 rounded-xl backdrop-blur-xl flex items-center gap-3 shadow-2xl",
-              toast.type === 'success' 
-                ? 'bg-emerald-500/10 border border-emerald-500/30 text-emerald-400' 
-                : 'bg-red-500/10 border border-red-500/30 text-red-400'
-            )}
-          >
-            {toast.type === 'success' ? <Check className="w-4 h-4" /> : <X className="w-4 h-4" />}
-            <span className="text-sm font-medium">{toast.message}</span>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {/* Toast Queue (stacked from top) */}
+      <div className="fixed top-6 left-1/2 -translate-x-1/2 z-50 flex flex-col items-center gap-2 pointer-events-none">
+        <AnimatePresence>
+          {toasts.map(t => (
+            <motion.div
+              key={t.id}
+              initial={{ opacity: 0, y: -20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              className={cn(
+                "px-5 py-3 rounded-xl backdrop-blur-xl flex items-center gap-3 shadow-2xl pointer-events-auto",
+                t.type === 'success'
+                  ? 'bg-emerald-500/10 border border-emerald-500/30 text-emerald-400'
+                  : 'bg-red-500/10 border border-red-500/30 text-red-400'
+              )}
+            >
+              {t.type === 'success' ? <Check className="w-4 h-4" /> : <X className="w-4 h-4" />}
+              <span className="text-sm font-medium">{t.message}</span>
+            </motion.div>
+          ))}
+        </AnimatePresence>
+      </div>
 
       {/* Header - Minimal & Clean */}
       <header className="sticky top-0 z-40 backdrop-blur-2xl bg-[#050510]/70 border-b border-white/5">

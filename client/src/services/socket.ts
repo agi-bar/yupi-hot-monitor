@@ -1,24 +1,55 @@
 import { io, Socket } from 'socket.io-client';
 
 let socket: Socket | null = null;
+let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+
+const RECONNECT_DELAYS = [1000, 2000, 5000, 10000]; // 渐进式重连延迟
 
 export function getSocket(): Socket {
   if (!socket) {
     socket = io(window.location.origin, {
       path: '/socket.io',
-      transports: ['websocket', 'polling']
+      transports: ['websocket', 'polling'],
+      reconnection: true,
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 10000,
+      timeout: 20000
     });
 
     socket.on('connect', () => {
       console.log('🔌 Socket connected:', socket?.id);
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
     });
 
-    socket.on('disconnect', () => {
-      console.log('🔌 Socket disconnected');
+    socket.on('disconnect', (reason) => {
+      console.log('🔌 Socket disconnected:', reason);
+    });
+
+    socket.on('reconnect_attempt', (attempt) => {
+      console.log(`🔌 Socket reconnection attempt #${attempt}`);
+    });
+
+    socket.on('reconnect', (attempt) => {
+      console.log(`🔌 Socket reconnected after ${attempt} attempts`);
+    });
+
+    socket.on('reconnect_failed', () => {
+      console.error('🔌 Socket reconnection failed, scheduling manual retry');
+      // 备用定时重连（应对 Socket.IO 内部重连耗尽）
+      const delay = RECONNECT_DELAYS[0] ?? 1000;
+      reconnectTimer = setTimeout(() => {
+        if (socket) {
+          socket.connect();
+        }
+      }, delay);
     });
 
     socket.on('connect_error', (error) => {
-      console.error('🔌 Socket connection error:', error);
+      console.error('🔌 Socket connection error:', error.message);
     });
   }
 
@@ -67,6 +98,10 @@ export function onNotification(callback: (notification: NotificationEvent) => vo
 }
 
 export function disconnectSocket(): void {
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
   if (socket) {
     socket.disconnect();
     socket = null;

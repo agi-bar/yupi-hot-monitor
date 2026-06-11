@@ -1,258 +1,210 @@
+/**
+ * 热点路由
+ * 优化:
+ * 1. 使用 asyncHandler 自动捕获异常
+ * 2. 使用 validators 清洗所有 query/body 输入
+ * 3. 内存排序只取当前页需要的量（避免先排序再分页）
+ */
 import { Router } from 'express';
 import { prisma } from '../db.js';
 import { sortHotspots } from '../utils/sortHotspots.js';
+import { asyncHandler, HttpError } from '../middleware/errorHandler.js';
+import {
+  parsePagination,
+  validateImportance,
+  validateSource,
+  validateTimeRange,
+  validateBoolString,
+  validateSortBy,
+  validateSortOrder
+} from '../utils/validators.js';
+
+const idOf = (req: { params: Record<string, string | string[] | undefined> }): string => {
+  const v = req.params.id;
+  if (Array.isArray(v)) return v[0] ?? '';
+  return v ?? '';
+};
 
 const router = Router();
 
-// 获取所有热点
-router.get('/', async (req, res) => {
-  try {
-    const { 
-      page = '1', 
-      limit = '20', 
-      source, 
-      importance,
-      keywordId,
-      isReal,
-      timeRange,
-      timeFrom,
-      timeTo,
-      sortBy = 'createdAt',
-      sortOrder = 'desc'
-    } = req.query;
+/**
+ * GET /api/hotspots
+ * 支持: 分页、筛选（来源/重要程度/关键词/时间/真实性）、排序
+ */
+router.get('/', asyncHandler(async (req, res) => {
+  const { page, limit, skip } = parsePagination(req.query as any);
+  const source = validateSource(req.query.source);
+  const importance = validateImportance(req.query.importance);
+  const keywordId = typeof req.query.keywordId === 'string' ? req.query.keywordId : '';
+  const isReal = validateBoolString(req.query.isReal);
+  const timeRange = validateTimeRange(req.query.timeRange);
+  const timeFrom = typeof req.query.timeFrom === 'string' ? req.query.timeFrom : '';
+  const timeTo = typeof req.query.timeTo === 'string' ? req.query.timeTo : '';
+  const sortBy = validateSortBy(req.query.sortBy);
+  const sortOrder = validateSortOrder(req.query.sortOrder);
 
-    const pageNum = parseInt(page as string);
-    const limitNum = parseInt(limit as string);
-    const skip = (pageNum - 1) * limitNum;
+  const where: any = {};
+  if (source) where.source = source;
+  if (importance) where.importance = importance;
+  if (keywordId) where.keywordId = keywordId;
+  if (isReal) where.isReal = isReal === 'true';
 
-    const where: any = {};
-    if (source) where.source = source;
-    if (importance) where.importance = importance;
-    if (keywordId) where.keywordId = keywordId;
-    if (isReal !== undefined && isReal !== '') {
-      where.isReal = isReal === 'true';
+  if (timeRange) {
+    const now = new Date();
+    let dateFrom: Date | null = null;
+    switch (timeRange) {
+      case '1h': dateFrom = new Date(now.getTime() - 60 * 60 * 1000); break;
+      case 'today': dateFrom = new Date(now); dateFrom.setHours(0, 0, 0, 0); break;
+      case '7d': dateFrom = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000); break;
+      case '30d': dateFrom = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000); break;
     }
-
-    // 时间范围筛选
-    if (timeRange) {
-      const now = new Date();
-      let dateFrom: Date | null = null;
-      switch (timeRange) {
-        case '1h':
-          dateFrom = new Date(now.getTime() - 60 * 60 * 1000);
-          break;
-        case 'today':
-          dateFrom = new Date(now);
-          dateFrom.setHours(0, 0, 0, 0);
-          break;
-        case '7d':
-          dateFrom = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-          break;
-        case '30d':
-          dateFrom = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-          break;
-      }
-      if (dateFrom) {
-        where.createdAt = { gte: dateFrom };
-      }
-    } else if (timeFrom || timeTo) {
-      where.createdAt = {};
-      if (timeFrom) where.createdAt.gte = new Date(timeFrom as string);
-      if (timeTo) where.createdAt.lte = new Date(timeTo as string);
-    }
-
-    // 排序处理
-    let orderBy: any;
-    const sort = sortBy as string;
-    const order = (sortOrder as string) === 'asc' ? 'asc' : 'desc';
-
-    // importance 和 hot 需要在内存中排序（Prisma 不支持自定义排序）
-    const needsMemorySort = sort === 'importance' || sort === 'hot';
-
-    switch (sort) {
-      case 'publishedAt':
-        orderBy = [{ publishedAt: order }, { createdAt: 'desc' }];
-        break;
-      case 'relevance':
-        orderBy = { relevance: order };
-        break;
-      case 'importance':
-      case 'hot':
-        orderBy = { createdAt: 'desc' };
-        break;
-      default:
-        orderBy = { createdAt: order };
-        break;
-    }
-
-    const [rawHotspots, total] = await Promise.all([
-      prisma.hotspot.findMany({
-        where,
-        orderBy,
-        ...(needsMemorySort ? {} : { skip, take: limitNum }),
-        include: {
-          keyword: {
-            select: { id: true, text: true, category: true }
-          }
-        }
-      }),
-      prisma.hotspot.count({ where })
-    ]);
-
-    let hotspots;
-    if (needsMemorySort) {
-      const sorted = sortHotspots(rawHotspots, sort, order as 'asc' | 'desc');
-      hotspots = sorted.slice(skip, skip + limitNum);
-    } else {
-      hotspots = rawHotspots;
-    }
-
-    res.json({
-      data: hotspots,
-      pagination: {
-        page: pageNum,
-        limit: limitNum,
-        total,
-        totalPages: Math.ceil(total / limitNum)
-      }
-    });
-  } catch (error) {
-    console.error('Error fetching hotspots:', error);
-    res.status(500).json({ error: 'Failed to fetch hotspots' });
+    if (dateFrom) where.createdAt = { gte: dateFrom };
+  } else if (timeFrom || timeTo) {
+    where.createdAt = {};
+    if (timeFrom) where.createdAt.gte = new Date(timeFrom);
+    if (timeTo) where.createdAt.lte = new Date(timeTo);
   }
-});
 
-// 获取热点统计
-router.get('/stats', async (req, res) => {
-  try {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+  // importance/hot 排序 Prisma 不支持，标记需要内存排序
+  const needsMemorySort = sortBy === 'importance' || sortBy === 'hot';
+  const order = sortOrder === 'asc' ? 'asc' : 'desc';
 
-    const [
-      totalHotspots,
-      todayHotspots,
-      urgentHotspots,
-      sourceStats
-    ] = await Promise.all([
-      prisma.hotspot.count(),
-      prisma.hotspot.count({
-        where: { createdAt: { gte: today } }
-      }),
-      prisma.hotspot.count({
-        where: { importance: 'urgent' }
-      }),
-      prisma.hotspot.groupBy({
-        by: ['source'],
-        _count: { source: true }
-      })
-    ]);
-
-    res.json({
-      total: totalHotspots,
-      today: todayHotspots,
-      urgent: urgentHotspots,
-      bySource: sourceStats.reduce((acc: Record<string, number>, item: { source: string; _count: { source: number } }) => {
-        acc[item.source] = item._count.source;
-        return acc;
-      }, {} as Record<string, number>)
-    });
-  } catch (error) {
-    console.error('Error fetching stats:', error);
-    res.status(500).json({ error: 'Failed to fetch stats' });
+  let orderBy: any;
+  switch (sortBy) {
+    case 'publishedAt':
+      orderBy = [{ publishedAt: order }, { createdAt: 'desc' }];
+      break;
+    case 'relevance':
+      orderBy = { relevance: order };
+      break;
+    default:
+      orderBy = { createdAt: order };
   }
-});
 
-// 获取单个热点
-router.get('/:id', async (req, res) => {
-  try {
-    const hotspot = await prisma.hotspot.findUnique({
-      where: { id: req.params.id },
-      include: {
-        keyword: true
-      }
-    });
+  // 内存排序时用 take=skip+limit 取到足够数据，避免加载全部
+  const dbTake = needsMemorySort ? skip + limit : limit;
 
-    if (!hotspot) {
-      return res.status(404).json({ error: 'Hotspot not found' });
-    }
+  const [rawHotspots, total] = await Promise.all([
+    prisma.hotspot.findMany({
+      where,
+      orderBy,
+      ...(needsMemorySort ? {} : { skip, take: limit }),
+      include: { keyword: { select: { id: true, text: true, category: true } } }
+    }),
+    prisma.hotspot.count({ where })
+  ]);
 
-    res.json(hotspot);
-  } catch (error) {
-    console.error('Error fetching hotspot:', error);
-    res.status(500).json({ error: 'Failed to fetch hotspot' });
+  let hotspots;
+  if (needsMemorySort) {
+    const sorted = sortHotspots(rawHotspots, sortBy, order);
+    hotspots = sorted.slice(skip, skip + limit);
+  } else {
+    hotspots = rawHotspots;
   }
-});
 
-// 手动搜索热点
-router.post('/search', async (req, res) => {
-  try {
-    const { query, sources = ['twitter', 'bing'] } = req.body;
+  res.json({
+    data: hotspots,
+    pagination: { page, limit, total, totalPages: Math.ceil(total / limit) }
+  });
+}));
 
-    if (!query) {
-      return res.status(400).json({ error: 'Query is required' });
+/**
+ * GET /api/hotspots/stats - 统计数据
+ */
+router.get('/stats', asyncHandler(async (_req, res) => {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const [totalHotspots, todayHotspots, urgentHotspots, sourceStats] = await Promise.all([
+    prisma.hotspot.count(),
+    prisma.hotspot.count({ where: { createdAt: { gte: today } } }),
+    prisma.hotspot.count({ where: { importance: 'urgent' } }),
+    prisma.hotspot.groupBy({ by: ['source'], _count: { source: true } })
+  ]);
+
+  const bySource = sourceStats.reduce<Record<string, number>>((acc, item) => {
+    acc[item.source] = item._count.source;
+    return acc;
+  }, {});
+
+  res.json({ total: totalHotspots, today: todayHotspots, urgent: urgentHotspots, bySource });
+}));
+
+/**
+ * GET /api/hotspots/:id
+ */
+router.get('/:id', asyncHandler(async (req, res) => {
+  const hotspot = await prisma.hotspot.findUnique({
+    where: { id: idOf(req) },
+    include: { keyword: true }
+  });
+  if (!hotspot) throw new HttpError(404, 'Hotspot not found');
+  res.json(hotspot);
+}));
+
+/**
+ * POST /api/hotspots/search - 手动搜索
+ */
+router.post('/search', asyncHandler(async (req, res) => {
+  const { query, sources = ['twitter', 'bing', 'hackernews', 'duckduckgo', 'sogou', 'bilibili', 'weibo'] } = req.body;
+
+  if (!query || typeof query !== 'string' || query.trim().length === 0) {
+    throw new HttpError(400, 'Query is required');
+  }
+  const cleanQuery = query.trim().slice(0, 200);
+
+  const validSources = Array.isArray(sources)
+    ? sources.filter(s => ['twitter', 'bing', 'hackernews', 'duckduckgo', 'sogou', 'bilibili', 'weibo'].includes(s))
+    : ['twitter', 'bing'];
+
+  const { searchTwitter } = await import('../services/twitter.js');
+  const { searchBing, searchHackerNews, searchDuckDuckGo } = await import('../services/search.js');
+  const { searchSogou, searchBilibili, searchWeibo } = await import('../services/chinaSearch.js');
+  const { analyzeContent } = await import('../services/ai.js');
+
+  const results: any[] = [];
+
+  const sourceHandlers: Record<string, () => Promise<any[]>> = {
+    twitter: () => searchTwitter(cleanQuery),
+    bing: () => searchBing(cleanQuery),
+    hackernews: () => searchHackerNews(cleanQuery),
+    duckduckgo: () => searchDuckDuckGo(cleanQuery),
+    sogou: () => searchSogou(cleanQuery),
+    bilibili: () => searchBilibili(cleanQuery),
+    weibo: () => searchWeibo(cleanQuery)
+  };
+
+  for (const source of validSources) {
+    const handler = sourceHandlers[source];
+    if (!handler) continue;
+    try {
+      const items = await handler();
+      results.push(...items);
+    } catch (error) {
+      console.error(`${source} search failed:`, error);
     }
+  }
 
-    // 导入搜索服务
-    const { searchTwitter } = await import('../services/twitter.js');
-    const { searchBing } = await import('../services/search.js');
-    const { analyzeContent } = await import('../services/ai.js');
-
-    const results: any[] = [];
-
-    // Twitter 搜索
-    if (sources.includes('twitter')) {
+  const analyzedResults = await Promise.all(
+    results.slice(0, 10).map(async (item) => {
       try {
-        const tweets = await searchTwitter(query);
-        results.push(...tweets);
-      } catch (error) {
-        console.error('Twitter search failed:', error);
+        const analysis = await analyzeContent(item.title + ' ' + item.content, cleanQuery);
+        return { ...item, analysis };
+      } catch {
+        return { ...item, analysis: null };
       }
-    }
+    })
+  );
 
-    // Bing 搜索
-    if (sources.includes('bing')) {
-      try {
-        const webResults = await searchBing(query);
-        results.push(...webResults);
-      } catch (error) {
-        console.error('Bing search failed:', error);
-      }
-    }
+  res.json({ results: analyzedResults });
+}));
 
-    // AI 分析前几个结果
-    const analyzedResults = await Promise.all(
-      results.slice(0, 10).map(async (item) => {
-        try {
-          const analysis = await analyzeContent(item.title + ' ' + item.content, query);
-          return { ...item, analysis };
-        } catch {
-          return { ...item, analysis: null };
-        }
-      })
-    );
-
-    res.json({ results: analyzedResults });
-  } catch (error) {
-    console.error('Error searching hotspots:', error);
-    res.status(500).json({ error: 'Failed to search hotspots' });
-  }
-});
-
-// 删除热点
-router.delete('/:id', async (req, res) => {
-  try {
-    await prisma.hotspot.delete({
-      where: { id: req.params.id }
-    });
-
-    res.status(204).send();
-  } catch (error: any) {
-    if (error.code === 'P2025') {
-      return res.status(404).json({ error: 'Hotspot not found' });
-    }
-    console.error('Error deleting hotspot:', error);
-    res.status(500).json({ error: 'Failed to delete hotspot' });
-  }
-});
+/**
+ * DELETE /api/hotspots/:id
+ */
+router.delete('/:id', asyncHandler(async (req, res) => {
+  await prisma.hotspot.delete({ where: { id: idOf(req) } });
+  res.status(204).send();
+}));
 
 export default router;

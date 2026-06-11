@@ -9,10 +9,13 @@ function makeHotspot(overrides: Partial<SortableHotspot> = {}): SortableHotspot 
     likeCount: 0,
     retweetCount: 0,
     viewCount: 0,
+    replyCount: 0,
+    commentCount: 0,
+    quoteCount: 0,
     importance: 'medium',
     relevance: 50,
-    publishedAt: '2026-02-25T10:00:00Z',
-    createdAt: '2026-02-25T12:00:00Z',
+    publishedAt: '2026-02-25T10:00:00Z' as Date | string | null,
+    createdAt: '2026-02-25T12:00:00Z' as Date | string,
     ...overrides,
   };
 }
@@ -20,45 +23,42 @@ function makeHotspot(overrides: Partial<SortableHotspot> = {}): SortableHotspot 
 // ========== calcHotScore 单元测试 ==========
 
 describe('calcHotScore', () => {
-  it('纯点赞计分：likeCount * 10', () => {
-    const item = makeHotspot({ likeCount: 100, retweetCount: 0, viewCount: 0 });
-    // views=0 → log10(max(0,1))=0, 所以热度=100*10=1000
-    expect(calcHotScore(item)).toBeCloseTo(1000, 0);
+  it('纯点赞计分：likeCount * 2', () => {
+    const item = makeHotspot({ likeCount: 100, retweetCount: 0, viewCount: 0, replyCount: 0, commentCount: 0, quoteCount: 0 });
+    expect(calcHotScore(item)).toBeCloseTo(200, 0);
   });
 
-  it('纯转发计分：retweetCount * 5', () => {
-    const item = makeHotspot({ likeCount: 0, retweetCount: 100, viewCount: 0 });
-    expect(calcHotScore(item)).toBeCloseTo(500, 0);
+  it('纯转发计分：retweetCount * 3', () => {
+    const item = makeHotspot({ likeCount: 0, retweetCount: 100, viewCount: 0, replyCount: 0, commentCount: 0, quoteCount: 0 });
+    expect(calcHotScore(item)).toBeCloseTo(300, 0);
   });
 
-  it('浏览量使用 log10 缩放，不会淹没互动指标', () => {
-    // 场景：561 likes + 10M views vs 11611 likes + 100K views
-    // 旧公式 (viewCount * 0.01): 561*3 + 10000000*0.01 = 101683 vs 11611*3 + 100000*0.01 = 35833
-    // 旧公式错误地让 561 likes 排在 11611 likes 前面
+  it('浏览量使用 log10 压缩，不会淹没互动指标', () => {
+    // 新公式: likes*2 + log10(views+1)*5
+    // 561*2 + log10(10000001)*5 = 1122 + 35 = 1157
+    // 11611*2 + log10(100001)*5 = 23222 + 25 = 23247
     const lowLikesHighViews = makeHotspot({ likeCount: 561, retweetCount: 0, viewCount: 10_000_000 });
     const highLikesLowViews = makeHotspot({ likeCount: 11611, retweetCount: 0, viewCount: 100_000 });
 
-    const scoreLow = calcHotScore(lowLikesHighViews);
-    const scoreHigh = calcHotScore(highLikesLowViews);
-
-    // 11611 likes 的帖子应该得分更高
-    expect(scoreHigh).toBeGreaterThan(scoreLow);
+    const sorted = sortHotspots([lowLikesHighViews, highLikesLowViews], 'hot', 'desc');
+    expect(sorted[0].likeCount).toBe(11611); // 高点赞应排在前面
   });
 
   it('浏览量为 null 时安全处理', () => {
     const item = makeHotspot({ likeCount: 100, viewCount: null });
-    expect(calcHotScore(item)).toBeCloseTo(1000, 0);
+    expect(calcHotScore(item)).toBeCloseTo(200, 0);
   });
 
   it('所有指标为 null 时返回 0', () => {
-    const item = makeHotspot({ likeCount: null, retweetCount: null, viewCount: null });
+    const item = makeHotspot({ likeCount: null, retweetCount: null, viewCount: null, replyCount: null, commentCount: null, quoteCount: null });
     expect(calcHotScore(item)).toBeCloseTo(0, 0);
   });
 
-  it('综合评分：点赞 + 转发 + 浏览 正确加权', () => {
-    const item = makeHotspot({ likeCount: 1000, retweetCount: 200, viewCount: 1_000_000 });
-    // 1000*10 + 200*5 + log10(1000000)*2 = 10000 + 1000 + 12 = 11012
-    expect(calcHotScore(item)).toBeCloseTo(11012, 0);
+  it('综合评分：各项指标正确加权', () => {
+    const item = makeHotspot({ likeCount: 1000, retweetCount: 200, viewCount: 1_000_000, replyCount: 50, commentCount: 30, quoteCount: 10 });
+    // 1000*2 + 200*3 + 50*1.5 + 30*1.5 + 10*2 + log10(1000001)*5
+    // = 2000 + 600 + 75 + 45 + 20 + 30 = 2770
+    expect(calcHotScore(item)).toBeCloseTo(2770, 0);
   });
 });
 
@@ -154,9 +154,7 @@ describe('sortHotspots', () => {
         makeHotspot({ publishedAt: null, createdAt: '2026-02-25T08:00:00Z' }),
       ];
       const sorted = sortHotspots(items, 'publishedAt', 'desc');
-      // 有发布时间的排第一，null 的按 createdAt 兜底
       expect(sorted[0].publishedAt).toBe('2026-02-25T12:00:00Z');
-      // 两个 null 的按 createdAt 排序
       expect(sorted[1].createdAt).toBe('2026-02-25T15:00:00Z');
       expect(sorted[2].createdAt).toBe('2026-02-25T08:00:00Z');
     });
@@ -186,7 +184,6 @@ describe('sortHotspots', () => {
 
     it('相同重要程度时按创建时间倒序排列 (desc)', () => {
       const sorted = sortHotspots(items, 'importance', 'desc');
-      // 两个 urgent 应按 createdAt desc 排列
       const urgents = sorted.filter(h => h.importance === 'urgent');
       expect(urgents[0].createdAt).toBe('2026-02-25T12:00:00Z');
       expect(urgents[1].createdAt).toBe('2026-02-25T09:00:00Z');
@@ -225,9 +222,9 @@ describe('sortHotspots', () => {
   describe('按热度综合排序 (hot)', () => {
     it('desc: 热度最高在前', () => {
       const items = [
-        makeHotspot({ likeCount: 100, retweetCount: 10, viewCount: 1000 }),   // 100*3+10*5+30=380
-        makeHotspot({ likeCount: 5000, retweetCount: 500, viewCount: 50000 }), // 5000*3+500*5+47=17547
-        makeHotspot({ likeCount: 10, retweetCount: 0, viewCount: 100 }),       // 10*3+0+20=50
+        makeHotspot({ likeCount: 100, retweetCount: 10, viewCount: 1000 }),
+        makeHotspot({ likeCount: 5000, retweetCount: 500, viewCount: 50000 }),
+        makeHotspot({ likeCount: 10, retweetCount: 0, viewCount: 100 }),
       ];
       const sorted = sortHotspots(items, 'hot', 'desc');
       expect(sorted[0].likeCount).toBe(5000);
@@ -248,26 +245,22 @@ describe('sortHotspots', () => {
     });
 
     it('【核心修复验证】高点赞低浏览 > 低点赞高浏览', () => {
-      // 这是截图中暴露的 bug：561 likes + 10M views 不应排在 11611 likes + 100K views 前面
       const items = [
-        makeHotspot({ likeCount: 561, retweetCount: 0, viewCount: 10_000_000 }),   // 低点赞 高浏览
-        makeHotspot({ likeCount: 11611, retweetCount: 0, viewCount: 100_000 }),     // 高点赞 低浏览
-        makeHotspot({ likeCount: 39796, retweetCount: 0, viewCount: 5_000_000 }),   // 最高点赞
+        makeHotspot({ likeCount: 561, retweetCount: 0, viewCount: 10_000_000 }),
+        makeHotspot({ likeCount: 11611, retweetCount: 0, viewCount: 100_000 }),
+        makeHotspot({ likeCount: 39796, retweetCount: 0, viewCount: 5_000_000 }),
       ];
 
       const sorted = sortHotspots(items, 'hot', 'desc');
 
-      // 39796 likes 应排第一
       expect(sorted[0].likeCount).toBe(39796);
-      // 11611 likes 应排第二（不是 561）
       expect(sorted[1].likeCount).toBe(11611);
-      // 561 likes 应排第三
       expect(sorted[2].likeCount).toBe(561);
     });
 
     it('null 互动数据等同于 0', () => {
       const items = [
-        makeHotspot({ likeCount: null, retweetCount: null, viewCount: null }),
+        makeHotspot({ likeCount: null, retweetCount: null, viewCount: null, replyCount: null, commentCount: null, quoteCount: null }),
         makeHotspot({ likeCount: 100, retweetCount: 0, viewCount: 0 }),
       ];
       const sorted = sortHotspots(items, 'hot', 'desc');
@@ -275,33 +268,32 @@ describe('sortHotspots', () => {
       expect(sorted[1].likeCount).toBe(null);
     });
 
-    it('转发权重高于点赞', () => {
-      // 纯转发 100 vs 纯点赞 100: 转发得分 500 vs 点赞得分 1000
-      // 新公式下点赞权重 > 转发权重
+    it('新公式下转发权重高于点赞', () => {
+      // 新公式: likes*2 vs retweets*3
+      // 100 RT = 300 vs 100 likes = 200
       const likes = makeHotspot({ likeCount: 100, retweetCount: 0, viewCount: 0 });
       const retweets = makeHotspot({ likeCount: 0, retweetCount: 100, viewCount: 0 });
       const sorted = sortHotspots([likes, retweets], 'hot', 'desc');
-      expect(sorted[0].likeCount).toBe(100); // 点赞权重 10 > 转发权重 5，点赞在前
+      expect(sorted[0].retweetCount).toBe(100); // 转发权重 3 > 点赞权重 2
     });
 
     it('【截图场景验证】11774 likes 应排在 11611 likes 前面', () => {
-      // 用户截图中：11,611 likes 排在 11,774 likes 前面，这是错的
       const items = [
         makeHotspot({ likeCount: 11611, retweetCount: 0, viewCount: 500_000 }),
         makeHotspot({ likeCount: 11774, retweetCount: 0, viewCount: 200_000 }),
       ];
       const sorted = sortHotspots(items, 'hot', 'desc');
-      // 11774 likes > 11611 likes，即使浏览量少，点赞应主导排序
       expect(sorted[0].likeCount).toBe(11774);
       expect(sorted[1].likeCount).toBe(11611);
     });
 
     it('点赞是主导因素，浏览量差异不会翻转排名', () => {
-      // 即使一条的浏览量是另一条的 100 倍，只要点赞差 200，排名不会翻转
-      const moreLikes = makeHotspot({ likeCount: 1200, retweetCount: 0, viewCount: 10_000 });
-      const moreViews = makeHotspot({ likeCount: 1000, retweetCount: 0, viewCount: 1_000_000 });
-      const sorted = sortHotspots([moreViews, moreLikes], 'hot', 'desc');
-      expect(sorted[0].likeCount).toBe(1200);
+      // 5000*2 + log10(10001)*5 = 10000 + 20 = 10020
+      // 1000*2 + log10(100001)*5 = 2000 + 25 = 2025
+      const manyMoreLikes = makeHotspot({ likeCount: 5000, retweetCount: 0, viewCount: 10_000 });
+      const fewerLikes = makeHotspot({ likeCount: 1000, retweetCount: 0, viewCount: 100_000 });
+      const sorted = sortHotspots([fewerLikes, manyMoreLikes], 'hot', 'desc');
+      expect(sorted[0].likeCount).toBe(5000); // 10020 > 2025
     });
   });
 
@@ -329,14 +321,13 @@ describe('sortHotspots', () => {
 
     it('支持 Date 对象和 ISO 字符串混合', () => {
       const items = [
-        makeHotspot({ createdAt: new Date('2026-02-25T14:00:00Z') }),
+        makeHotspot({ createdAt: new Date('2026-02-25T14:00:00Z') as unknown as string }),
         makeHotspot({ createdAt: '2026-02-25T10:00:00Z' }),
-        makeHotspot({ createdAt: new Date('2026-02-25T16:00:00Z') }),
+        makeHotspot({ createdAt: new Date('2026-02-25T16:00:00Z') as unknown as string }),
       ];
       const sorted = sortHotspots(items, 'createdAt', 'desc');
-      // 16:00 > 14:00 > 10:00
-      expect(new Date(sorted[0].createdAt).getTime()).toBeGreaterThan(new Date(sorted[1].createdAt).getTime());
-      expect(new Date(sorted[1].createdAt).getTime()).toBeGreaterThan(new Date(sorted[2].createdAt).getTime());
+      expect(new Date(sorted[0].createdAt as string | Date).getTime()).toBeGreaterThan(new Date(sorted[1].createdAt as string | Date).getTime());
+      expect(new Date(sorted[1].createdAt as string | Date).getTime()).toBeGreaterThan(new Date(sorted[2].createdAt as string | Date).getTime());
     });
 
     it('默认排序方向为 desc', () => {

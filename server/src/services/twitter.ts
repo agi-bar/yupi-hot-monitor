@@ -36,10 +36,11 @@ function filterAndRankTweets(tweets: Tweet[]): Tweet[] {
     return true;
   });
 
-  // 质量评分排序：likes*2 + retweets*3 + views/100 + 蓝V加权
+  // 质量评分排序：与 sortHotspots.ts 的 calcHotScoreRaw 公式对齐
+  // likes*2 + retweets*3 + log10(views+1)*5 + 蓝V加权
   filtered.sort((a, b) => {
-    const scoreA = a.likeCount * 2 + a.retweetCount * 3 + a.viewCount / 100 + (a.author.isBlueVerified ? 50 : 0);
-    const scoreB = b.likeCount * 2 + b.retweetCount * 3 + b.viewCount / 100 + (b.author.isBlueVerified ? 50 : 0);
+    const scoreA = a.likeCount * 2 + a.retweetCount * 3 + (a.viewCount > 0 ? Math.log10(a.viewCount + 1) * 5 : 0) + (a.author.isBlueVerified ? 50 : 0);
+    const scoreB = b.likeCount * 2 + b.retweetCount * 3 + (b.viewCount > 0 ? Math.log10(b.viewCount + 1) * 5 : 0) + (b.author.isBlueVerified ? 50 : 0);
     return scoreB - scoreA;
   });
 

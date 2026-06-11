@@ -6,7 +6,7 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 import { searchTwitter } from './services/twitter.js';
-import { searchBing, searchHackerNews } from './services/search.js';
+import { searchBing, searchHackerNews, searchDuckDuckGo } from './services/search.js';
 import { searchSogou, searchBilibili, searchWeibo } from './services/chinaSearch.js';
 
 const TEST_QUERY = 'Codex';
@@ -43,6 +43,7 @@ async function main() {
   results.push(await testSource('Twitter', () => searchTwitter(TEST_QUERY)));
   results.push(await testSource('Bing', () => searchBing(TEST_QUERY)));
   results.push(await testSource('HackerNews', () => searchHackerNews(TEST_QUERY)));
+  results.push(await testSource('DuckDuckGo', () => searchDuckDuckGo(TEST_QUERY)));
   results.push(await testSource('Sogou', () => searchSogou(TEST_QUERY)));
   results.push(await testSource('Bilibili', () => searchBilibili(TEST_QUERY)));
   results.push(await testSource('Weibo', () => searchWeibo(TEST_QUERY)));

@@ -1,41 +1,114 @@
-import { OpenRouter } from '@openrouter/sdk';
 import type { AIAnalysis } from '../types.js';
 
-const openRouter = new OpenRouter({
-  apiKey: process.env.OPENROUTER_API_KEY ?? ''
-});
+// ========== MiniMax API 配置 ==========
+const MINIMAX_API_URL = 'https://api.minimax.chat/v1/text/chatcompletion_pro';
+const MINIMAX_MODEL = 'MiniMax-Text-01';
+
+interface MiniMaxMessage {
+  role: 'system' | 'user' | 'assistant';
+  content: string;
+}
+
+interface MiniMaxResponse {
+  choices?: Array<{
+    finish_reason?: string;
+    index?: number;
+    messages?: MiniMaxMessage[];
+  }>;
+  base_resp?: {
+    status_code?: number;
+    status_msg?: string;
+  };
+}
+
+async function callMiniMaxAI(messages: MiniMaxMessage[], temperature = 0.2, maxTokens = 500): Promise<string> {
+  const apiKey = process.env.MINIMAX_API_KEY;
+  const groupId = process.env.MINIMAX_GROUP_ID;
+
+  if (!apiKey || !groupId) {
+    throw new Error('MiniMax API key or Group ID not configured');
+  }
+
+  const response = await fetch(`${MINIMAX_API_URL}?GroupId=${groupId}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`
+    },
+    body: JSON.stringify({
+      model: MINIMAX_MODEL,
+      tokens_to_generate: maxTokens,
+      temperature: temperature,
+      messages: messages
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error(`MiniMax API error: ${response.status} ${response.statusText}`);
+  }
+
+  const data: MiniMaxResponse = await response.json();
+
+  if (data.base_resp?.status_code !== 0) {
+    throw new Error(`MiniMax API error: ${data.base_resp?.status_msg}`);
+  }
+
+  const choice = data.choices?.[0];
+  if (!choice?.messages || choice.messages.length === 0) {
+    throw new Error('No response from MiniMax AI');
+  }
+
+  // 返回最后一条 assistant 消息的内容
+  const assistantMsg = choice.messages.find(m => m.role === 'assistant');
+  return assistantMsg?.content || '';
+}
 
 // ========== Query Expansion（查询扩展） ==========
 
 /**
  * 使用 AI 将关键词扩展为多个变体，用于文本预过滤。
  * 返回扩展后的关键词列表（含原始关键词）。
- * 结果会被缓存，同一关键词不会重复调用 AI。
+ * 结果会被 LRU 缓存，同一关键词不会重复调用 AI。超过 MAX_CACHE_SIZE 时淘汰最久未命中的条目。
  */
+const MAX_CACHE_SIZE = 500;
 const expansionCache = new Map<string, string[]>();
+
+function setCacheWithLRU(key: string, value: string[]): void {
+  // 命中已存在时，删除后重新插入以更新插入顺序（Map 保留插入顺序）
+  if (expansionCache.has(key)) {
+    expansionCache.delete(key);
+  }
+  expansionCache.set(key, value);
+  // 超过上限时淘汰最老的（Map 第一个 key）
+  if (expansionCache.size > MAX_CACHE_SIZE) {
+    const oldest = expansionCache.keys().next().value;
+    if (oldest !== undefined) expansionCache.delete(oldest);
+  }
+}
 
 export async function expandKeyword(keyword: string): Promise<string[]> {
   // 缓存命中
   if (expansionCache.has(keyword)) {
-    return expansionCache.get(keyword)!;
+    const value = expansionCache.get(keyword)!;
+    // 更新 LRU 顺序
+    setCacheWithLRU(keyword, value);
+    return value;
   }
 
   // 不管 AI 是否可用，先提取基础核心词
   const coreTerms = extractCoreTerms(keyword);
 
-  if (!process.env.OPENROUTER_API_KEY) {
+  if (!process.env.MINIMAX_API_KEY || !process.env.MINIMAX_GROUP_ID) {
     const result = [keyword, ...coreTerms];
-    expansionCache.set(keyword, result);
+    setCacheWithLRU(keyword, result);
     return result;
   }
 
   try {
-    const result = await openRouter.chat.send({
-      model: 'deepseek/deepseek-v3.2',
-      messages: [
-        {
-          role: 'system',
-          content: `你是一个搜索查询扩展专家。给定一个监控关键词，生成该关键词的变体和相关检索词，用于文本匹配。
+    const content = await callMiniMaxAI([
+      {
+        role: 'system',
+        content: `你是一个搜索查询扩展专家。给定一个监控关键词，生成该关键词的变体和相关检索词，用于文本匹配。
 
 规则：
 1. 包含原始关键词的各种写法（大小写、空格、连字符变体）
@@ -47,24 +120,19 @@ export async function expandKeyword(keyword: string): Promise<string[]> {
 输出 JSON 数组，只输出 JSON，不要有其他内容。
 示例输入："Claude Sonnet 4.6"
 示例输出：["Claude Sonnet 4.6", "Claude Sonnet", "Sonnet 4.6", "claude-sonnet-4.6", "Claude 4.6", "Anthropic Sonnet"]`
-        },
-        {
-          role: 'user',
-          content: keyword
-        }
-      ],
-      temperature: 0.2,
-      maxTokens: 300
-    });
+      },
+      {
+        role: 'user',
+        content: keyword
+      }
+    ], 0.2, 300);
 
-    const rawContent = result.choices[0]?.message?.content || '';
-    const responseContent = typeof rawContent === 'string' ? rawContent : JSON.stringify(rawContent);
-    const jsonMatch = responseContent.match(/\[[\s\S]*\]/);
+    const jsonMatch = content.match(/\[[\s\S]*\]/);
     if (jsonMatch) {
       const parsed: string[] = JSON.parse(jsonMatch[0]);
       // 确保原始关键词和核心词都在列表中
       const expanded = [...new Set([keyword, ...coreTerms, ...parsed.map(s => s.trim()).filter(Boolean)])];
-      expansionCache.set(keyword, expanded);
+      setCacheWithLRU(keyword, expanded);
       console.log(`  🔍 Query expansion for "${keyword}": ${expanded.length} variants`);
       return expanded;
     }
@@ -74,7 +142,7 @@ export async function expandKeyword(keyword: string): Promise<string[]> {
 
   // Fallback：使用基础核心词
   const fallback = [keyword, ...coreTerms];
-  expansionCache.set(keyword, fallback);
+  setCacheWithLRU(keyword, fallback);
   return fallback;
 }
 
@@ -152,8 +220,8 @@ export async function analyzeContent(content: string, keyword: string, preMatchR
   // 默认预匹配结果
   const matchResult = preMatchResult ?? { matched: false, matchedTerms: [] };
 
-  if (!process.env.OPENROUTER_API_KEY) {
-    console.warn('OpenRouter API key not configured, using fallback analysis');
+  if (!process.env.MINIMAX_API_KEY || !process.env.MINIMAX_GROUP_ID) {
+    console.warn('MiniMax API key not configured, using fallback analysis');
     return {
       isReal: true,
       relevance: matchResult.matched ? 50 : 20,
@@ -167,24 +235,16 @@ export async function analyzeContent(content: string, keyword: string, preMatchR
   try {
     const prompt = buildAnalysisPrompt(keyword, matchResult);
 
-    const result = await openRouter.chat.send({
-      model: 'deepseek/deepseek-v3.2',
-      messages: [
-        {
-          role: 'system',
-          content: prompt
-        },
-        {
-          role: 'user',
-          content: content.slice(0, 2000) // 限制内容长度
-        }
-      ],
-      temperature: 0.2, // 降低温度，提高判断一致性
-      maxTokens: 500
-    });
-
-    const rawContent = result.choices[0]?.message?.content || '';
-    const responseContent = typeof rawContent === 'string' ? rawContent : JSON.stringify(rawContent);
+    const responseContent = await callMiniMaxAI([
+      {
+        role: 'system',
+        content: prompt
+      },
+      {
+        role: 'user',
+        content: content.slice(0, 2000) // 限制内容长度
+      }
+    ], 0.2, 500);
     
     // 尝试解析 JSON
     const jsonMatch = responseContent.match(/\{[\s\S]*\}/);

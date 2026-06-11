@@ -1,16 +1,25 @@
 /**
  * 热点排序工具函数
  * 供后端路由和前端客户端排序共用
+ *
+ * 热度综合公式：
+ *   likes×2 + retweets×3 + replies×1.5 + comments×1.5 + quotes×2 + log10(views+1)×5
+ *   log 压缩浏览量避免淹没互动指标，同时保留合理区分度
+ *
+ * 归一化（展示用）：log10(raw+1) × 25，上限 100
  */
 
 export interface SortableHotspot {
   likeCount: number | null;
   retweetCount: number | null;
   viewCount: number | null;
+  replyCount: number | null;
+  commentCount: number | null;
+  quoteCount: number | null;
   importance: string;
   relevance: number;
   publishedAt: Date | string | null;
-  createdAt: Date | string;
+  createdAt: Date | string | null;
 }
 
 /** 重要程度数值映射，数值越小越重要 */
@@ -22,22 +31,38 @@ export const IMPORTANCE_ORDER: Record<string, number> = {
 };
 
 /**
- * 计算热度综合分数
- *
- * 公式设计说明：
- * - 点赞为主要排序依据，权重最高
- * - 转发权重次之
- * - 浏览量用 log10 对数缩放作为辅助信号
- *
- * 前端以闪电图标 (⚡) 展示 likeCount，用户直觉上以此判断热度，
- * 因此 likeCount 必须是主导因素。
+ * 计算热度原始分数（加权求和）
+ * 浏览量使用 log10 压缩：100K views → 50分，10M views → 70分
  */
-export function calcHotScore(item: SortableHotspot): number {
+export function calcHotScoreRaw(item: SortableHotspot): number {
   const likes = item.likeCount || 0;
   const retweets = item.retweetCount || 0;
+  const replies = item.replyCount || 0;
+  const comments = item.commentCount || 0;
+  const quotes = item.quoteCount || 0;
   const views = item.viewCount || 0;
 
-  return likes * 10 + retweets * 5 + Math.log10(Math.max(views, 1)) * 2;
+  // log10 压缩浏览量，系数 5：100K views ≈ 25, 1M views ≈ 30, 10M views ≈ 35
+  const viewScore = views > 0 ? Math.log10(views + 1) * 5 : 0;
+
+  return likes * 2 + retweets * 3 + replies * 1.5 + comments * 1.5 + quotes * 2 + viewScore;
+}
+
+/**
+ * 将热度原始分数归一化到 0-100（log 压缩）
+ */
+export function normalizeHotScore(raw: number): number {
+  if (raw <= 0) return 0;
+  return Math.min(100, Math.round(Math.log10(raw + 1) * 25));
+}
+
+/**
+ * 计算热度综合分数（原始分数，用于排序比较）
+ * 
+ * 注意：排序用原始分数（保留排序精度），展示用归一化分数（0-100 可读）
+ */
+export function calcHotScore(item: SortableHotspot): number {
+  return calcHotScoreRaw(item);
 }
 
 /**
@@ -51,7 +76,7 @@ export function compareImportance(a: SortableHotspot, b: SortableHotspot): numbe
 /**
  * 获取时间戳（毫秒），兼容 Date 对象和 ISO 字符串
  */
-function toTimestamp(d: Date | string | null): number {
+function toTimestamp(d: Date | string | null | undefined): number {
   if (!d) return 0;
   return typeof d === 'string' ? new Date(d).getTime() : d.getTime();
 }
@@ -79,7 +104,6 @@ export function sortHotspots<T extends SortableHotspot>(
         const ta = toTimestamp(a.publishedAt);
         const tb = toTimestamp(b.publishedAt);
         result = ta - tb;
-        // 如果发布时间相同或都为空，按创建时间倒序
         if (result === 0) {
           result = toTimestamp(a.createdAt) - toTimestamp(b.createdAt);
         }
@@ -88,17 +112,10 @@ export function sortHotspots<T extends SortableHotspot>(
 
       case 'importance': {
         result = compareImportance(a, b);
-        // 重要性相同时，按创建时间倒序兜底
         if (result === 0) {
           result = toTimestamp(a.createdAt) - toTimestamp(b.createdAt);
-          // 对兜底时间也应用 desc
           return desc ? -(result) : result;
         }
-        // importance 的 "desc" 含义是"最重要在前"
-        // IMPORTANCE_ORDER 已经是 urgent=0 < low=3
-        // 所以 result < 0 意味着 a 更重要
-        // desc 时我们要 a 在前，即返回负数 → 直接返回 result
-        // asc 时我们要 a 在后，即返回正数 → 返回 -result
         return desc ? result : -result;
       }
 
